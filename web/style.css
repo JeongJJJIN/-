@@ -609,5 +609,46 @@ table.fit.now-table tbody th, table.fit.now-table td { white-space: nowrap; }
 .radar-scale .scale-bar span[data-mark]::before { content: attr(data-mark); position: absolute; top: 16px; left: 0; transform: translateX(-50%); font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
 .radar-scale .scale-bar span[data-mark]::after { content: ""; position: absolute; top: 12px; left: -0.5px; width: 1px; height: 5px; background: var(--ink-3); }
 
+/* ====================================================================
+   화면 정리: 화면 설명, 요약, 노선별 현황, 철도 구간 전망, 분석
+   ==================================================================== */
+.lede { margin: 10px 0 0; color: var(--ink-2); font-size: 14px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.block.first { margin-top: 16px; }
+.summary-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.summary-tiles .tile { padding: 10px 12px; }
+.summary-tiles .tile .label { font-size: 12px; }
+.summary-tiles .tile .value { font-size: 26px; }
+.summary-tiles .tile .value.pending { font-size: 16px; }
+
+.lines-table .pill { margin: 0 4px 4px 0; }
+.lines-table td { text-align: left; }
+.lines-table td:last-child { min-width: 9em; }
+.lines-table .zone-names { margin-top: 0; line-height: 1.6; }
+table.fit.lines-table td { white-space: normal; }
+
+.outlook > li + li { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hair); }
+.outlook h3 { margin: 0 0 8px; font-size: 16px; }
+.outlook h3 small { color: var(--ink-3); font-size: 12px; font-weight: 400; }
+.outlook-item { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }
+.outlook-main { margin: 0; font-weight: 600; }
+.outlook-sub { margin: 2px 0 0; color: var(--ink-2); font-size: 14px; }
+
+.findings { margin: 0; padding-left: 18px; }
+.findings li { margin-top: 8px; }
+.findings li:first-child { margin-top: 0; }
+.pill.verdict-later { background: var(--z-adv); color: var(--ink); }
+.pill.verdict-earlier { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
+.pill.verdict-no_difference { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
+.pill.verdict-insufficient { background: transparent; color: var(--ink-3); border-color: var(--axis); border-style: dashed; }
+
+/* 선로 강우 실황 */
+.summary-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rain-dot { stroke: var(--map-land); stroke-width: 0.8; transform-box: fill-box; transform-origin: center; transform: scale(var(--u, 1)); pointer-events: none; }
+.rain-dot.strong { stroke: var(--ink); stroke-width: 1.1; }
+.rain-key { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; border: 1px solid var(--map-line); vertical-align: -1px; }
+table.fit.rain-table td, table.fit.rain-table tbody th { white-space: nowrap; }
+@media (min-width: 620px) { .summary-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
 /* hidden 속성은 display 를 지정한 요소에서도 늘 숨긴다 */
 [hidden] { display: none !important; }

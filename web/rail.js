@@ -1,4 +1,5 @@
-/* 철도 특보 지도 — 전국 특보 구역(현재) + 철도 노선·역 + 비구름 레이더를 한 지도에, 그리고 전날까지의 열차 지연 통계.
+/* 지금 지도 — 전국 특보 구역(현재) + 철도 노선·역 + 비구름 레이더를 한 지도에, 그리고 노선별 특보 현황.
+ * (열차 지연 통계는 분석 화면 analysis.js 로 옮겼다.)
  * 지도는 외부 지도 서비스 없이 geo/*.json(특보구역·노선·역)을 직접 그리고, 기상청 레이더 합성영상을 같은 좌표에 겹친다.
  * 열차의 실시간 위치는 공개 자료가 없어 표시하지 않는다(코레일 공식 화면으로 연결).
  */
@@ -33,7 +34,7 @@
   const Live = window.TeukboLive;
   // base = 3시간마다 만들어지는 전국 특보(data/warnings.json), live = 몇 분마다 새로 만들어지는 실시간 자료.
   // warnings = 지금 화면에 쓰는 것(실시간을 쓸 수 있으면 실시간, 아니면 base).
-  const state = { zones: null, rail: null, stations: null, base: null, live: null, warnings: null, latest: null, summary: null, type: "all", view: { ...FULL }, picked: null, svg: null };
+  const state = { zones: null, rail: null, stations: null, base: null, live: null, warnings: null, latest: null, lines: [], type: "all", view: { ...FULL }, picked: null, svg: null };
 
   // ------------------------------------------------------------ 도우미
 
@@ -63,7 +64,6 @@
   }
   const fmtClock = (iso) => { const p = kst(iso); return `${p.month}월 ${p.day}일 ${p.hour}:${p.minute}`; };
   const fmtDayHour = (iso) => { const p = kst(iso); return `${p.day}일(${p.weekday}) ${p.hour}시`; };
-  const fmtDate = (ymd) => { const [, m, d] = ymd.split("-"); return `${Number(m)}월 ${Number(d)}일`; };
   function fmtAgo(iso) {
     const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
     if (minutes < 1) return "방금";
@@ -71,12 +71,6 @@
     const hours = Math.floor(minutes / 60);
     return hours < 48 ? `${hours}시간 ${minutes % 60 ? `${minutes % 60}분 ` : ""}전` : `${Math.floor(hours / 24)}일 전`;
   }
-  const num = (value, digits = 1) => (value == null ? "–" : Number(value).toFixed(digits).replace(/\.0+$/, ""));
-  const share = (part, total) => {
-    if (!total) return "–";
-    const pct = (part / total) * 100;
-    return part > 0 && pct < 1 ? "1% 미만" : `${Math.round(pct)}%`;
-  };
   const stationLabel = (name) => name.replace(/^S(?=[가-힣])/, "");
   const typeOf = (name) => name.replace(/\s*예비특보$/, "").replace(/(중대경보|주의보|경보)$/, "");
   const isWarningLevel = (name) => /경보$/.test(name);
@@ -174,6 +168,7 @@
       labels.append(st.text);
     }
     state.byRank = [...state.stations].sort((a, b) => a.rank - b.rank);
+    state.stationByKey = new Map(state.stations.map((st) => [st.key, st]));
     // 레이더 영상: 제목·범례 부분은 잘라 내고 지도 부분만 겹친다.
     // 영상에 그려져 있는 해안선·경위선(검정)과 바탕(흰색·회색)은 색기가 없으므로, 색기가 있는 화소(비구름)만 남기고 투명하게 만든다.
     //   d1·d2 = 채널 사이의 차(양수만 남음) → 그 합이 색기 → 불투명도.  ※ 150mm/h 이상을 뜻하는 짙은 회색은 함께 빠진다(기상청 범례의 맨 끝 단계).
@@ -187,7 +182,8 @@
       s("feComposite", { in: "SourceGraphic", in2: "mask", operator: "in" }));
     state.radarImage = s("image", { class: "radar-layer", x: 0, y: 0, width: RADAR.width, height: RADAR.height, preserveAspectRatio: "none", filter: "url(#radar-key)", "aria-hidden": "true" });
     const radarLayer = s("g", { "clip-path": "url(#radar-clip)" }, state.radarImage);
-    svg.append(s("defs", null, state.patterns, key, s("clipPath", { id: "radar-clip" }, s("rect", { x: f.x, y: f.y, width: f.w, height: f.h }))), zones, radarLayer, casing, rail, marks, labels);
+    state.rainLayer = s("g", { class: "rain-dots", "aria-hidden": "true" });  // 선로 위의 강우(레이더에서 읽은 값) — 레이더 그림을 꺼도 보인다
+    svg.append(s("defs", null, state.patterns, key, s("clipPath", { id: "radar-clip" }, s("rect", { x: f.x, y: f.y, width: f.w, height: f.h }))), zones, radarLayer, casing, rail, state.rainLayer, marks, labels);
     holder.append(svg);
     state.svg = svg;
     bindMapEvents(svg);
@@ -431,7 +427,7 @@
     const list = ["all", ...[...names].sort((a, b) => (order.indexOf(a) + 99) % 99 - (order.indexOf(b) + 99) % 99)];
     if (!list.includes(state.type)) state.type = "all";
     for (const name of list) {
-      box.append(h("button", { class: "chip", type: "button", "aria-pressed": String(state.type === name), onclick: () => { state.type = name; renderTypeChips(); paintZones(); renderPicked(); renderList(); } }, name === "all" ? "전체" : name));
+      box.append(h("button", { class: "chip", type: "button", "aria-pressed": String(state.type === name), onclick: () => { state.type = name; renderTypeChips(); paintZones(); renderPicked(); renderLines(); renderList(); } }, name === "all" ? "전체" : name));
     }
   }
 
@@ -509,6 +505,130 @@
     panel.append(h("p", { class: "official-foot" }, `기상청 발표 기준${w.provider ? ` (${w.provider})` : ""}, ${fmtClock(w.generated_at)} 확인 · `, h("a", { href: OFFICIAL_URL, rel: "noopener" }, "날씨누리 특보 현황")));
   }
 
+  // ------------------------------------------------------------ 선로 강우 실황 (서버가 레이더 영상에서 읽은 값)
+
+  const RAIN_STALE_MINUTES = 30;
+  /** 쓸 수 있는 선로 강우 자료(최근에 확인했고, 영상도 최근 것). 없으면 null. */
+  function railRain() {
+    const rain = state.live && state.live.rail_rain;
+    if (!rain || !Live.fresh(rain, liveStale())) return null;
+    return (Date.now() - new Date(rain.frame).getTime()) / 60000 <= RAIN_STALE_MINUTES + 15 ? rain : null;
+  }
+  const rainColor = (rate) => { let color = Live.RADAR_SCALE[0][1]; for (const [from, c] of Live.RADAR_SCALE) if (rate >= from) color = c; return color; };
+  /** 강수 강도 구간을 글로: "5~6mm/h", "150mm/h 이상" */
+  const rainRange = (lo, hi) => (hi == null ? `${Live.num(lo)}mm/h 이상` : `${Live.num(lo)}~${Live.num(hi)}mm/h`);
+  /** 기상청 강수 강도 구분에서 눈여겨볼 단계 */
+  const rainWord = (lo) => (lo >= 30 ? "매우 강한 비" : lo >= 15 ? "강한 비" : "");
+
+  function renderRain() {
+    const panel = clear($("rain-status")), rain = railRain();
+    const layer = clear(state.rainLayer);
+    if (!rain) {
+      const raw = state.live && state.live.rail_rain;
+      panel.append(h("p", { class: "empty", text: !liveConfig() ? "실시간 자료가 연결되어 있지 않습니다." : raw && raw.error ? "레이더 영상을 읽지 못해 선로 강우를 표시하지 않습니다." : "선로 강우 자료를 아직 받지 못했습니다." }));
+      return;
+    }
+    for (const [lon, lat, rate] of rain.points || []) {
+      const [x, y] = P(lon, lat);
+      layer.append(s("circle", { cx: x.toFixed(2), cy: y.toFixed(2), r: rate >= 15 ? 4.2 : 3.2, fill: rainColor(rate), class: rate >= 15 ? "rain-dot strong" : "rain-dot" }));
+    }
+    const clock = fmtClock(rain.frame).replace(/^.*일 /, "");
+    const wet = (rain.lines || []).filter((line) => line.now > 0), dried = (rain.lines || []).filter((line) => !(line.now > 0) && line.acc60 >= 0.1);
+    if (!wet.length && !dried.length) {
+      panel.append(h("p", { class: "empty", text: `지금 선로 위에 비구름이 없습니다 (레이더 ${clock} 영상 기준).` }));
+    } else {
+      const row = (line) => h("tr", null,
+        h("th", { scope: "row", text: line.name }),
+        h("td", { class: line.now >= 15 ? "over" : null }, line.now > 0 ? [h("span", { class: "rain-key", style: `background:${rainColor(line.now)}` }), rainRange(line.now, line.hi)] : "그침",
+          rainWord(line.now) ? h("small", null, rainWord(line.now)) : null),
+        h("td", null, line.zone ? h("button", { class: "linklike", type: "button", onclick: () => { pick({ kind: "zone", code: line.zone }); focusZone(line.zone); } }, zoneFullName(line.zone)) : "–"),
+        h("td", { text: line.acc60 >= 0.1 ? `약 ${Live.num(line.acc60)}mm` : "0.1mm 미만" }));
+      panel.append(h("div", { class: "table-scroll" }, h("table", { class: "fit rain-table" },
+        h("thead", null, h("tr", null, h("th", { scope: "col", text: "노선" }), h("th", { scope: "col" }, "지금 가장 센 곳", h("small", null, "레이더 추정")), h("th", { scope: "col", text: "어디" }), h("th", { scope: "col" }, "최근 1시간", h("small", null, "추정 누적")))),
+        h("tbody", null, [...wet, ...dried].map(row)))));
+    }
+    panel.append(h("p", { class: "official-foot" }, `기상청 레이더 합성영상 ${clock} 관측분 · ${fmtAgo(rain.checked_at)} 확인`,
+      rain.frames_1h < 12 ? ` · 최근 1시간 영상 12장 중 ${rain.frames_1h}장으로 계산` : "", " · 우량계 관측이 아닌 레이더 추정값입니다."));
+  }
+
+  // ------------------------------------------------------------ 지금 요약·노선별 특보 현황
+
+  /** 구역의 공식 발표 가운데 가장 높은 단계: 3 경보(중대경보 포함) · 2 주의보 · 1 예비특보 · 0 없음 */
+  const zoneRank = (off) => (!off ? 0 : off.active.some((a) => isWarningLevel(a.name)) ? 3 : off.active.length ? 2 : off.pre.length ? 1 : 0);
+  const RANK_PILL = { 3: ["warn", "경보"], 2: ["adv", "주의보"], 1: ["pre", "예비특보"] };
+
+  /** 노선마다, 지금 특보·예비특보 구역에 걸린 부분을 찾는다. official 은 officialByZone() 의 결과(고른 종류만일 수도, 전체일 수도). */
+  function affectedLines(official) {
+    const rows = [];
+    for (const line of state.lines) {
+      const hit = line.parts.filter(([zone]) => zoneRank(official.get(zone)) > 0);
+      if (!hit.length) continue;
+      const names = new Map();  // 특보 이름 → 단계
+      for (const [zone] of hit) {
+        const off = official.get(zone);
+        for (const a of off.active) names.set(a.name, isWarningLevel(a.name) ? 3 : 2);
+        for (const p of off.pre) if (!names.has(p.name)) names.set(p.name, 1);
+      }
+      rows.push({ line, hit, top: Math.max(...hit.map(([zone]) => zoneRank(official.get(zone)))), names });
+    }
+    return rows.sort((a, b) => b.top - a.top || b.hit.length - a.hit.length || a.line.name.localeCompare(b.line.name, "ko"));
+  }
+
+  function allOfficial() {
+    const keep = state.type;
+    state.type = "all";
+    try { return officialByZone(); } finally { state.type = keep; }
+  }
+
+  function renderSummary() {
+    const box = clear($("now-summary")), w = state.warnings;
+    const tile = (label, value, unit, sub) => h("div", { class: "tile" }, h("p", { class: "label", text: label }), h("p", { class: value == null ? "value pending" : "value" }, value == null ? "확인 불가" : String(value), value != null && unit ? h("small", null, unit) : null), h("p", { class: "sub", text: sub || "\u00a0" }));
+    const rain = railRain(), wet = rain ? (rain.lines || []).filter((line) => line.now > 0) : [];
+    const rainTile = !rain ? tile("선로 위 가장 센 비", null)
+      : wet.length ? tile("선로 위 가장 센 비", Live.num(wet[0].now), wet[0].hi == null ? "mm/h 이상" : `~${Live.num(wet[0].hi)}mm/h`, `${wet[0].name.replace(/ \(.*\)$/, "")} ${zoneFullName(wet[0].zone)} · 비 오는 노선 ${wet.length}개`)
+      : tile("선로 위 가장 센 비", "없음", "", `레이더 ${fmtClock(rain.frame).replace(/^.*일 /, "")} 영상 기준`);
+    if (!w || !w.available) {
+      box.append(tile("특보 발효 구역", null), tile("예비특보 구역", null), tile("특보 구역을 지나는 노선", null), rainTile);
+      return;
+    }
+    const official = allOfficial();
+    let warn = 0, adv = 0, pre = 0;
+    for (const [code, off] of official) {
+      if (!code.startsWith("L")) continue;
+      const rank = zoneRank(off);
+      if (rank === 3) warn += 1; else if (rank === 2) adv += 1;
+      if (off.pre.length) pre += 1;
+    }
+    const lines = affectedLines(official).filter((r) => r.top >= 2);
+    box.append(
+      tile("특보 발효 구역", warn + adv, "곳", warn + adv ? `경보 ${warn}곳 · 주의보 ${adv}곳` : "전국 육상 기준"),
+      tile("예비특보 구역", pre, "곳", pre ? "곧 특보가 내려질 수 있는 곳" : "전국 육상 기준"),
+      tile("특보 구역을 지나는 노선", lines.length, "개", lines.length ? lines.slice(0, 3).map((r) => r.line.name.replace(/ \(.*\)$/, "")).join("·") + (lines.length > 3 ? " 외" : "") : "발효 중인 특보 기준"),
+      rainTile);
+  }
+
+  function renderLines() {
+    const panel = clear($("line-status")), w = state.warnings;
+    if (!w || !w.available) { panel.append(h("p", { class: "empty" }, "특보 현황을 확인하지 못했습니다. ", h("a", { href: OFFICIAL_URL, rel: "noopener" }, "기상청 날씨누리에서 확인하세요."))); return; }
+    const official = officialByZone(), rows = affectedLines(official);
+    if (!rows.length) {
+      panel.append(h("p", { class: "empty", text: state.type === "all" ? "지금 특보·예비특보 구역을 지나는 노선이 없습니다." : `지금 ${state.type} 특보·예비특보 구역을 지나는 노선이 없습니다.` }));
+      return;
+    }
+    const zoneButton = (zone) => h("button", { class: "linklike", type: "button", onclick: () => { pick({ kind: "zone", code: zone }); focusZone(zone); } }, zoneFullName(zone));
+    const body = rows.map(({ line, hit, names }) => {
+      const stations = [...new Set(hit.flatMap(([, keys]) => keys.map((key) => (state.stationByKey.get(key) || {}).label)).filter(Boolean))];
+      return h("tr", null,
+        h("th", { scope: "row" }, line.name, line.fast ? h("small", null, "고속선") : null),
+        h("td", null, [...names].sort((a, b) => b[1] - a[1]).map(([name, rank]) => h("span", { class: `pill ${RANK_PILL[rank][0]}`, text: name }))),
+        h("td", null, h("div", { class: "zone-names" }, hit.flatMap(([zone], i) => (i ? [", ", zoneButton(zone)] : [zoneButton(zone)]))),
+          stations.length ? h("small", null, `구역 안의 역: ${stations.join(", ")}`) : h("small", null, "구역 안에 역 없음")));
+    });
+    panel.append(h("div", { class: "table-scroll" }, h("table", { class: "fit lines-table" },
+      h("thead", null, h("tr", null, ["노선", "특보", "걸린 구역과 역"].map((t) => h("th", { scope: "col", text: t })))), h("tbody", null, body))),
+      h("p", { class: "note", text: "노선이 특보 구역을 지난다는 뜻이며, 열차 운행에 영향이 있다는 뜻은 아닙니다. 운행 여부는 코레일 안내를 확인하세요." }));
+  }
+
   function focusZone(code) {
     const zone = state.zones[code];
     if (!zone) return;
@@ -516,113 +636,6 @@
     const [cx, cy] = P(lon, lat);
     setView({ x: cx - w / 2, y: cy - (w * state.view.h) / state.view.w / 2, w, h: (w * state.view.h) / state.view.w });
     $("map").scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-
-  // ------------------------------------------------------------ 열차 지연 통계
-
-  function statRow(label, st, lateKey, strong) {
-    if (!st || !st.n) return h("tr", { class: strong ? "strong" : null }, h("th", { scope: "row", text: label }), ["0", "–", "–", "–"].map((c) => h("td", { text: c })));
-    return h("tr", { class: strong ? "strong" : null }, h("th", { scope: "row", text: label }),
-      h("td", { text: String(st.n) }), h("td", { text: num(st.mean) }), h("td", { text: num(st.median) }),
-      h("td", null, share(st[lateKey], st.n), h("small", null, `${st[lateKey]}편`)));
-  }
-
-  function renderDelay() {
-    const box = clear($("delay")), period = $("delay-period"), sum = state.summary;
-    if (!sum || !sum.period || !sum.period.days) {
-      period.textContent = "";
-      box.append(h("div", { class: "panel" }, h("p", { class: "empty", text: "아직 집계된 열차 운행 기록이 없습니다. 수집이 시작되면 표시됩니다." })));
-      return;
-    }
-    const late = (sum.late_minutes || [5, 10, 20])[1] || 10, lateKey = `late${late}`;
-    period.textContent = `${fmtDate(sum.period.from)} ~ ${fmtDate(sum.period.to)} (${sum.period.days}일) · 코레일 공식 운행 기록 기준${sum.demo ? " · 데모 자료" : ""}`;
-    const day = sum.latest_day, last = sum.daily[sum.daily.length - 1] || {};
-
-    const tile = (label, value, unit, sub) => h("div", { class: "tile" }, h("p", { class: "label", text: label }), h("p", { class: "value" }, value, unit ? h("small", null, unit) : null), h("p", { class: "sub", text: sub }));
-    box.append(h("h3", { class: "sub-h", text: `${fmtDate(day.date)} 하루` }), h("div", { class: "tiles" },
-      tile("지연을 계산한 열차", String(day.all.n || 0), "편", `운행 기록 ${day.counts.recorded}편 중`),
-      tile("평균 종착 지연", num(day.all.mean), "분", `가장 늦은 열차 ${day.all.max ?? "–"}분`),
-      tile(`${late}분 이상 지연`, String(day.all[lateKey] ?? 0), "편", `전체의 ${share(day.all[lateKey] || 0, day.all.n || 0)}`),
-      tile("특보 구간을 지난 열차", String(last.warned ?? 0), "편", Object.keys(day.by_warning).length ? Object.keys(day.by_warning).join("·") : "해당 없음")));
-
-    const compare = h("tbody", null,
-      statRow("특보 구간을 지나지 않음", sum.clear, lateKey, true),
-      statRow("특보 구간을 지남", sum.warned, lateKey, true),
-      Object.entries(sum.by_warning).map(([name, st]) => statRow(`· ${name}`, st, lateKey)));
-    box.append(h("h3", { class: "sub-h", text: `특보 구간을 지난 열차는 얼마나 늦었나 (누적 ${sum.period.days}일)` }),
-      h("div", { class: "panel" },
-        h("div", { class: "table-scroll" }, h("table", { class: "fit" },
-          h("thead", null, h("tr", null, h("th", { scope: "col", text: "열차" }), ["열차 수", "평균(분)", "중앙값(분)", `${late}분 이상`].map((t) => h("th", { scope: "col", text: t })))), compare)),
-        (sum.warned.n || 0) < 30 ? h("p", { class: "note", text: `특보 구간을 지난 열차가 아직 ${sum.warned.n || 0}편뿐이라 차이를 단정하기 어렵습니다. 자료가 쌓이면 달라질 수 있습니다.` }) : null,
-        h("p", { class: "note", text: "특보와 지연이 같은 때 있었다는 뜻이며, 특보가 지연의 원인이라는 뜻은 아닙니다." })));
-
-    box.append(h("h3", { class: "sub-h", text: "최근 날짜별 평균 지연" }), h("div", { class: "panel" }, trendChart(sum.daily, lateKey, late)));
-
-    const lines = Object.entries(sum.by_line).map(([name, v]) => ({ name, warn: v.warn, clear: v.clear, n: (v.warn.n || 0) + (v.clear.n || 0) })).sort((a, b) => b.n - a.n);
-    const lineRow = (l) => h("tr", null, h("th", { scope: "row", text: l.name }), h("td", { text: String(l.n) }), h("td", { text: num(l.clear.mean) }), h("td", { text: l.warn.n ? `${num(l.warn.mean)} (${l.warn.n}편)` : "–" }));
-    const head = h("thead", null, h("tr", null, h("th", { scope: "col", text: "노선" }), h("th", { scope: "col", text: "열차 수" }), h("th", { scope: "col" }, "평균 지연(분)", h("small", null, "특보 없을 때")), h("th", { scope: "col" }, "평균 지연(분)", h("small", null, "특보 구간 통과"))));
-    box.append(h("h3", { class: "sub-h", text: `노선별 (누적 ${sum.period.days}일)` }), h("div", { class: "panel" },
-      h("div", { class: "table-scroll" }, h("table", null, head, h("tbody", null, lines.slice(0, 10).map(lineRow)))),
-      lines.length > 10 ? h("details", { class: "data-table" }, h("summary", { text: `나머지 ${lines.length - 10}개 노선 보기` }), h("div", { class: "table-scroll" }, h("table", null, h("tbody", null, lines.slice(10).map(lineRow))))) : null,
-      h("p", { class: "note", text: "노선은 열차의 주운행선 기준입니다(예: 전라선 KTX는 경부·호남고속선 구간을 달려도 전라선으로 셉니다)." })));
-
-    if (day.top_delayed && day.top_delayed.length) {
-      box.append(h("h3", { class: "sub-h", text: `${fmtDate(day.date)} 종착 지연이 컸던 열차` }), h("div", { class: "panel" }, h("div", { class: "table-scroll" }, h("table", { class: "fit" },
-        h("thead", null, h("tr", null, ["열차 (계획 도착 시각)", "지연(분)", "지나간 특보"].map((t) => h("th", { scope: "col", text: t })))),
-        h("tbody", null, day.top_delayed.slice(0, 10).map((t) => h("tr", null,
-          h("th", { scope: "row" }, `${t.class} ${Number(t.trn_no)}`, h("small", null, `${stationLabel(t.origin)} → ${stationLabel(t.dest)}${t.plan_arr ? ` · ${t.plan_arr} 도착` : ""}`)),
-          h("td", { class: "over", text: String(t.arr_delay) }), h("td", { text: (t.warnings || []).join(", ") || "–" }))))))));
-    }
-  }
-
-  /** 날짜별 평균 지연 막대 그래프 (계열 하나). 값은 막대를 가리키거나 아래 표로도 볼 수 있다. */
-  function trendChart(daily, lateKey, late) {
-    const wrap = h("figure", { style: "margin:0" });
-    const chart = h("div", { class: "chart" });
-    wrap.append(chart);
-    const W = Math.max(300, Math.min(720, ($("delay").clientWidth || 640) - 34)), H = 210, M = { top: 26, right: 8, bottom: 30, left: 30 };
-    const max = Math.max(5, ...daily.map((d) => d.mean || 0));
-    const step = max <= 6 ? 2 : max <= 15 ? 5 : 10, top = Math.ceil(max / step) * step;
-    const plotW = W - M.left - M.right, plotH = H - M.top - M.bottom, band = plotW / daily.length, bar = Math.min(24, band * 0.62);
-    const y = (v) => M.top + plotH * (1 - v / top);
-    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `최근 ${daily.length}일의 날짜별 평균 종착 지연(분) 막대 그래프` });
-    const grid = s("g", { class: "grid" });
-    for (let v = 0; v <= top; v += step) { grid.append(s("line", { x1: M.left, x2: W - M.right, y1: y(v), y2: y(v) })); svg.append(s("text", { class: "tick", x: M.left - 6, y: y(v) + 4, "text-anchor": "end" }, String(v))); }
-    svg.prepend(grid);
-    svg.append(s("text", { class: "tick", x: M.left - 6, y: 11, "text-anchor": "end" }, "분"));
-    const tip = h("div", { class: "tip", hidden: true });
-    daily.forEach((d, i) => {
-      const cx = M.left + band * (i + 0.5), value = d.mean || 0, y0 = y(0), y1 = y(value), r = Math.min(4, (y0 - y1) / 2);
-      const path = value > 0 ? `M${cx - bar / 2} ${y0}V${y1 + r}Q${cx - bar / 2} ${y1} ${cx - bar / 2 + r} ${y1}H${cx + bar / 2 - r}Q${cx + bar / 2} ${y1} ${cx + bar / 2} ${y1 + r}V${y0}Z` : "";
-      const [, m, dd] = d.date.split("-");
-      const label = `${Number(m)}월 ${Number(dd)}일: 평균 ${num(d.mean)}분, ${late}분 이상 ${d[lateKey] ?? 0}편, 특보 구간 통과 ${d.warned || 0}편, 열차 ${d.n || 0}편`;
-      const show = () => {
-        clear(tip).append(h("p", { class: "tip-time", text: `${Number(m)}월 ${Number(dd)}일` }),
-          h("div", { class: "tip-row" }, h("span", null, "평균 지연"), h("b", null, `${num(d.mean)}분`)),
-          h("div", { class: "tip-row" }, h("span", null, `${late}분 이상`), h("b", null, `${d[lateKey] ?? 0}편`)),
-          h("div", { class: "tip-row" }, h("span", null, "특보 구간 통과"), h("b", null, `${d.warned || 0}편`)));
-        tip.hidden = false;
-        const scale = svg.getBoundingClientRect().width / W, px = cx * scale, width = tip.offsetWidth || 150;
-        tip.style.left = `${Math.max(0, Math.min(px - width / 2, W * scale - width))}px`;
-        tip.style.top = "0px";
-      };
-      const g = s("g", { class: "bar-g", tabindex: "0", role: "img", "aria-label": label, onpointerenter: show, onfocus: show, onpointerleave: () => { tip.hidden = true; }, onblur: () => { tip.hidden = true; } },
-        s("rect", { x: cx - band / 2, y: M.top, width: band, height: plotH, fill: "transparent" }),
-        path ? s("path", { class: "bar", d: path }) : null,
-        d.warned ? s("path", { class: "warn-mark", d: `M${cx} ${y1 - 12}l4 4l-4 4l-4 -4Z` }) : null);
-      svg.append(g);
-      // 좁으면 하루 건너 하나씩 적되, 마지막 날(가장 최근)은 늘 적는다
-      if (band >= 30 || (daily.length - 1 - i) % 2 === 0) svg.append(s("text", { class: "tick", x: cx, y: H - 12, "text-anchor": "middle" }, `${Number(dd)}일`));
-    });
-    svg.append(s("line", { class: "axis-line", x1: M.left, x2: W - M.right, y1: y(0), y2: y(0) }));
-    chart.append(svg, tip);
-    wrap.append(h("ul", { class: "legend" },
-      h("li", null, h("span", { class: "swatch bar-key" }), "평균 종착 지연(분)"),
-      h("li", null, h("span", { class: "swatch warn-key" }), "특보 구간을 지난 열차가 있던 날")));
-    wrap.append(h("details", { class: "data-table" }, h("summary", { text: "표로 보기" }), h("div", { class: "table-scroll" }, h("table", null,
-      h("thead", null, h("tr", null, ["날짜", "열차 수", "평균(분)", `${late}분 이상`, "최대(분)", "특보 구간 통과"].map((t) => h("th", { scope: "col", text: t })))),
-      h("tbody", null, daily.map((d) => h("tr", null, h("th", { scope: "row", text: fmtDate(d.date) }), [d.n, num(d.mean), d[lateKey], d.max, d.warned].map((v) => h("td", { text: v == null ? "–" : String(v) })))))))));
-    return wrap;
   }
 
   // ------------------------------------------------------------ 시작
@@ -633,19 +646,19 @@
     renderLegend();
     paintZones();
     renderPicked();
+    renderRain();
+    renderSummary();
+    renderLines();
     renderList();
-    renderDelay();
   }
 
   async function loadData() {
-    const [warnings, latest, summary] = await Promise.all([
+    const [warnings, latest] = await Promise.all([
       getJson("data/warnings.json", true).catch(() => null),
       getJson("data/latest.json", true).catch(() => null),
-      getJson("data/rail.json", true).catch(() => null),
     ]);
     state.base = warnings || state.base;
     state.latest = latest || state.latest;
-    state.summary = summary || state.summary;
     derive();
     renderAll();
     loadLive();
@@ -672,13 +685,15 @@
     const before = Live.warningsSignature({ warnings: state.warnings });
     derive();
     renderHead();
-    if (Live.warningsSignature({ warnings: state.warnings }) !== before) { renderTypeChips(); paintZones(); renderList(); }
+    renderRain();
+    if (Live.warningsSignature({ warnings: state.warnings }) !== before) { renderTypeChips(); paintZones(); renderLines(); renderList(); }
+    renderSummary();
     renderPicked();
   }
 
   async function start() {
     try {
-      [state.zones, state.rail, state.stations] = await Promise.all([getJson("geo/zones.json"), getJson("geo/rail.json"), getJson("geo/stations.json")]);
+      [state.zones, state.rail, state.stations, state.lines] = await Promise.all([getJson("geo/zones.json"), getJson("geo/rail.json"), getJson("geo/stations.json"), getJson("geo/lines.json").catch(() => [])]);
     } catch (error) {
       $("updated").textContent = "지도 자료를 불러오지 못했습니다";
       clear($("map")).append(h("p", { class: "empty", text: "지도 자료를 불러오지 못했습니다. 잠시 뒤 새로 고쳐 주세요." }));
@@ -697,11 +712,6 @@
       liveTimer += 60;
       if (!document.hidden && liveConfig() && liveTimer >= every) { liveTimer = 0; loadLive(); } else refreshLive();
     }, 60 * 1000);
-    let resizeTimer = 0, lastWidth = $("delay").clientWidth;
-    window.addEventListener("resize", () => {
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => { if ($("delay").clientWidth !== lastWidth) { lastWidth = $("delay").clientWidth; renderDelay(); } }, 200);
-    });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) loadData(); });  // loadData 가 실시간 자료도 다시 읽는다
     setInterval(() => { if (!document.hidden) loadData(); }, REFRESH_MS);
   }

@@ -1,16 +1,20 @@
 """실시간 자료 수집: 특보·예비특보, 지금 날씨(초단기실황), 앞으로 6시간(초단기예보)을 live.json 하나로 묶는다.
 
-    python3 -m teukbo.live --out _live/live.json --prev 이전_live.json
+    python3 -m teukbo.live --out _live/live.json --prev 이전_live.json --state 이전_state.json --state-out _live/state.json
 
 3시간마다 도는 본 수집(teukbo.run)과 달리 몇 분마다 가볍게 돈다(GitHub Actions 의 live.yml).
 - 특보·예비특보: 실행할 때마다 조회
 - 초단기실황·초단기예보: 기상청이 값을 바꾸는 간격(10분)에 맞춰, 설정한 간격이 지났거나 새 기준시각이 나왔을 때만 조회
+- 선로 강우: 기상청 레이더 합성영상(5분 간격)을 직접 읽어 노선 위의 강수 강도와 최근 1시간 추정 누적을 구한다(teukbo.radar)
 - 조회에 실패하면 직전 값을 그대로 싣되 '확인 시각'(checked_at)은 바꾸지 않는다 → 화면이 얼마나 오래된 값인지 정확히 알 수 있다
 
 live.json
     generated_at            이 파일을 만든 시각
     warnings                전국 특보·예비특보(특보구역 코드 단위) + checked_at
     obs / fcst              실황·초단기예보의 상태 {available, base(기준시각), checked_at, provider, error}
+    rail_rain               선로 강우(레이더 추정) {available, frame(영상 시각), checked_at, frames_1h, error,
+                              lines: [{name, now(지금 최대 강도 구간의 아래 값 mm/h), hi(위 값), at[경도, 위도], zone, acc60(1시간 추정 mm), parts: [[구역, 지금, 1시간]…]}],
+                              points: [[경도, 위도, 강도]…]}   — 비가 있는 노선·표본점만
     regions[지역 id]
         official            그 지역의 발효 특보·예비특보 (latest.json 과 같은 형식)
         hz                  특보(종류·단계)별 공식 발표 상태 {특보 id: [상태, 단계, 발효 시각]}
@@ -28,7 +32,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import storage
+from . import radar, storage
 from .assess import RegionOfficial, official_for
 from .config import Config, load_config
 from .http import normalize_service_key
@@ -142,6 +146,16 @@ def collect(cfg: Config, now: datetime, env: Mapping[str, str], prev: Mapping[st
     return {"schema": SCHEMA, "generated_at": iso(now), "warnings": warnings, "obs": sections["obs"], "fcst": sections["fcst"], "regions": regions}
 
 
+def collect_rail_rain(cfg: Config, now: datetime, prev: Mapping[str, Any] | None, state: Mapping[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """선로 강우(레이더). 실패하면 직전 값을 확인 시각 그대로 이어 쓴다. 반환: (rail_rain, 다음 실행에 넘길 상태)"""
+    settings = cfg.settings.raw.get("live", {})
+    result, new_state = radar.collect(now, state, radar.RailSamples.load(), cfg.settings.http)
+    if not result.get("available"):
+        carried = _carry(prev if isinstance(prev, dict) else {}, "rail_rain", now, float(settings.get("rail_rain_carry_minutes", 30)), result.get("error"))
+        return carried, new_state
+    return result, new_state
+
+
 def summary_line(doc: Mapping[str, Any]) -> str:
     def part(label: str, section: Mapping[str, Any], extra: str = "") -> str:
         if not section.get("available"):
@@ -150,13 +164,21 @@ def summary_line(doc: Mapping[str, Any]) -> str:
 
     w = doc["warnings"]
     counts = f", 발효 {len(w.get('active', []))}·예비 {len(w.get('preliminary', []))}건" if w.get("available") else ""
-    return " / ".join([part("특보", w, counts), part("실황", doc["obs"], f"(기준 {str(doc['obs'].get('base', ''))[11:16]})"), part("초단기예보", doc["fcst"], f"(발표 {str(doc['fcst'].get('base', ''))[11:16]})")])
+    parts = [part("특보", w, counts), part("실황", doc["obs"], f"(기준 {str(doc['obs'].get('base', ''))[11:16]})"), part("초단기예보", doc["fcst"], f"(발표 {str(doc['fcst'].get('base', ''))[11:16]})")]
+    rain = doc.get("rail_rain")
+    if rain is not None:
+        wet = [line for line in rain.get("lines", []) if line.get("now", 0) > 0]
+        top = f", 비 오는 노선 {len(wet)}개" + (f"(최대 {wet[0]['name']} {wet[0]['now']:g}mm/h 이상)" if wet else "")
+        parts.append(part("선로 강우", rain, f"(영상 {str(rain.get('frame', ''))[11:16]}{top})"))
+    return " / ".join(parts)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="실시간 자료 수집 (특보·지금 날씨·앞으로 6시간)")
     parser.add_argument("--out", type=Path, required=True, help="결과 파일 (live.json)")
     parser.add_argument("--prev", type=Path, default=None, help="직전 결과 파일 (있으면 조회 간격 판단·실패 시 이어 쓰기에 사용)")
+    parser.add_argument("--state", type=Path, default=None, help="직전 실행이 남긴 상태 파일 (레이더 최근 1시간 값)")
+    parser.add_argument("--state-out", type=Path, default=None, help="다음 실행에 넘길 상태 파일. 주면 선로 강우(레이더)도 계산한다")
     parser.add_argument("--now", type=str, default=None, help="기준 시각 ISO 8601 (시험용)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -172,6 +194,19 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             log.warning("직전 결과 파일을 읽지 못해 처음부터 받습니다: %s", args.prev)
     doc = collect(cfg, now, os.environ, prev)
+    if args.state_out is not None and cfg.settings.raw.get("live", {}).get("rail_rain", True):
+        state = None
+        if args.state is not None:
+            try:
+                state = storage.read_json(args.state)
+            except ValueError:
+                log.warning("상태 파일을 읽지 못해 레이더를 처음부터 받습니다: %s", args.state)
+        try:
+            doc["rail_rain"], new_state = collect_rail_rain(cfg, now, prev, state)
+            storage.write_json(args.state_out, new_state)
+        except Exception as e:  # 선로 강우가 실패해도 특보·날씨는 올린다
+            log.exception("선로 강우 계산 실패")
+            doc["rail_rain"] = {"available": False, "checked_at": None, "error": f"{type(e).__name__}: {e}"}
     storage.write_json(args.out, doc)
     line = summary_line(doc)
     log.info("실시간 자료: %s", line)

@@ -221,6 +221,71 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class AdjustedDifferenceTest(unittest.TestCase):
+    """같은 노선끼리 비교한 지연 차이."""
+
+    def setUp(self):
+        from teukbo import rail
+
+        self.rail = rail
+
+    def test_line_mix_does_not_fake_an_effect(self):
+        # 붐비는 노선(평소 10분)의 열차만 특보 구간을 지났다면, 전체 평균끼리는 차이가 나 보여도 같은 노선끼리는 0이다
+        by_line = {
+            "경부선": {"warn": [10] * 40, "clear": [10, 9, 11] * 40},
+            "전라선": {"warn": [], "clear": [1, 2, 0] * 60},
+        }
+        out = self.rail.adjusted_difference(by_line)
+        self.assertEqual((out["n"], out["lines"], out["diff"]), (40, 1, 0.0))
+        self.assertEqual(out["verdict"], "no_difference")
+
+    def test_clear_effect_is_reported_with_interval(self):
+        by_line = {
+            "전라선": {"warn": [12, 15, 18, 14, 16] * 8, "clear": [2, 3, 1, 4, 2] * 30},
+            "경전선": {"warn": [9, 11, 10, 12] * 5, "clear": [3, 2, 4, 3] * 20},
+        }
+        out = self.rail.adjusted_difference(by_line)
+        self.assertEqual((out["n"], out["lines"]), (60, 2))
+        # 전라선 +12.6분(40편), 경전선 +7.5분(20편) → 가중 평균 10.9분
+        self.assertAlmostEqual(out["diff"], 10.9, places=1)
+        self.assertLess(out["low"], out["diff"])
+        self.assertGreater(out["low"], 9.0)
+        self.assertLess(out["high"], 12.5)
+        self.assertEqual(out["verdict"], "later")
+
+    def test_small_samples_are_not_judged(self):
+        out = self.rail.adjusted_difference({"전라선": {"warn": [30, 40, 50], "clear": [1, 2, 3, 2, 1]}})
+        self.assertEqual((out["n"], out["verdict"]), (3, "insufficient"))
+        self.assertGreater(out["diff"], 30)
+
+    def test_small_difference_is_not_called_an_effect(self):
+        by_line = {"경부선": {"warn": [3.5] * 400, "clear": [3.0] * 4000}}  # 0.5분 차이는 뚜렷해도 운영상 의미가 없다
+        self.assertEqual(self.rail.adjusted_difference(by_line)["verdict"], "no_difference")
+
+    def test_earlier_and_empty(self):
+        by_line = {"경부선": {"warn": [1, 0, 2, 1] * 20, "clear": [6, 7, 5, 8] * 50}}
+        self.assertEqual(self.rail.adjusted_difference(by_line)["verdict"], "earlier")
+        self.assertEqual(self.rail.adjusted_difference({}), {"n": 0, "lines": 0, "verdict": "insufficient"})
+        self.assertEqual(self.rail.adjusted_difference({"경부선": {"warn": [5, 6], "clear": []}})["n"], 0)  # 비교할 열차가 없는 노선은 쓰지 않는다
+
+    def test_early_arrivals_count_as_zero(self):
+        out = self.rail.adjusted_difference({"경부선": {"warn": [-5, -3] * 20, "clear": [0, 0, 0] * 20}})
+        self.assertEqual(out["diff"], 0.0)
+
+    def test_aggregate_includes_adjusted_by_type(self):
+        fields = ["trn_no", "line", "class", "origin", "dest", "plan_dep", "plan_arr", "dep_delay", "arr_delay", "warnings"]
+        trains = [[f"{i:05d}", "전라선", "KTX", "용산", "여수엑스포", "05:00", "08:00", 0, 14 + i % 3, ["호우경보"]] for i in range(40)]
+        trains += [[f"{100 + i:05d}", "전라선", "KTX", "용산", "여수엑스포", "05:00", "08:00", 0, 2 + i % 3, []] for i in range(80)]
+        trains += [[f"{300 + i:05d}", "경부선", "KTX", "서울", "부산", "05:00", "08:00", 0, 9, []] for i in range(200)]
+        summary = self.rail.aggregate([{"date": "2026-11-11", "fields": fields, "trains": trains, "all": {"n": 320, "mean": 6.0, "late10": 40, "max": 16}}])
+        self.assertEqual(summary["adjusted"]["all"]["verdict"], "later")
+        self.assertEqual(summary["adjusted"]["all"]["diff"], 12.0)
+        self.assertEqual(set(summary["adjusted"]["by_type"]), {"호우"})
+        self.assertEqual(summary["adjusted"]["by_type"]["호우"]["n"], 40)
+        # 전체 평균끼리는 9.0 vs 7.0 가까이로 차이가 작아 보인다 → 같은 노선 비교가 필요한 이유
+        self.assertLess(summary["warned"]["mean"] - summary["clear"]["mean"], 9.0)
+
+
 class RailRunTest(unittest.TestCase):
     """실행부: 받아 온 자료로 날짜별 파일·이력 보관·누적 통계를 만든다(네트워크는 가짜)."""
 

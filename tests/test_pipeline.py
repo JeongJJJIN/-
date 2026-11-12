@@ -171,7 +171,8 @@ class DemoPipelineTest(unittest.TestCase):
         build = site.build_site(self.dir, out)
         self.assertEqual(len(build), 10)
         for name in ("index.html", "app.js", "style.css", "sw.js", "manifest.webmanifest", "data/latest.json", "data/accuracy.json", "data/warnings.json", "data/detail/suncheon.json",
-                     "rail.html", "rail.js", "live.js", "geo/zones.json", "geo/rail.json", "geo/stations.json", "data/rail.json", "data/live.json"):
+                     "rail.html", "rail.js", "live.js", "analysis.html", "analysis.js", "ui.js",
+                     "geo/zones.json", "geo/rail.json", "geo/stations.json", "geo/lines.json", "data/rail.json", "data/live.json"):
             self.assertTrue((out / name).is_file(), name)
         self.assertFalse((out / "data" / "rail").exists())  # 날짜별 원자료는 배포하지 않는다
         self.assertIn(build, (out / "sw.js").read_text(encoding="utf-8"))
@@ -383,6 +384,7 @@ class RailPageTest(unittest.TestCase):
         cls.zones = json.loads((cls.WEB / "geo" / "zones.json").read_text(encoding="utf-8"))
         cls.rail = json.loads((cls.WEB / "geo" / "rail.json").read_text(encoding="utf-8"))
         cls.stations = json.loads((cls.WEB / "geo" / "stations.json").read_text(encoding="utf-8"))
+        cls.lines = json.loads((cls.WEB / "geo" / "lines.json").read_text(encoding="utf-8"))
 
     def test_zone_shapes_cover_every_land_warning_zone(self):
         from teukbo.zones import load_zone_table
@@ -430,6 +432,41 @@ class RailPageTest(unittest.TestCase):
                 self.assertEqual(len(path) % 2, 0, line["name"])
                 self.assertGreaterEqual(len(path), 4, line["name"])
 
+    def test_lines_pass_through_known_zones_and_stations(self):
+        """노선이 지나는 특보구역·역 자료(노선별 특보 현황, 철도 구간 전망의 바탕)."""
+        keys = {s["code"] or f"name:{s['name']}": s for s in self.stations}
+        self.assertEqual({l["name"] for l in self.lines}, {l["name"] for l in self.rail})
+        for line in self.lines:
+            zones = [zone for zone, _ in line["parts"]]
+            self.assertEqual(len(zones), len(set(zones)), line["name"])  # 한 구역은 한 번만
+            self.assertTrue(zones, line["name"])
+            seen = set()
+            for zone, station_keys in line["parts"]:
+                self.assertIn(zone, self.zones, line["name"])
+                for key in station_keys:
+                    self.assertIn(key, keys, f"{line['name']} {key}")
+                    self.assertEqual(keys[key]["zone"], zone, f"{line['name']} {keys[key]['name']}")  # 역은 자기 구역 아래에만
+                    self.assertNotIn(key, seen, f"{line['name']} {key}")
+                    seen.add(key)
+        by_name = {l["name"]: l for l in self.lines}
+        names = lambda line: [[keys[k]["name"] for k in ks] for _, ks in by_name[line]["parts"]]  # noqa: E731
+        flat = lambda line: [n for group in names(line) for n in group]  # noqa: E731
+        # 전라선: 익산 → … → 순천 → 여수 (북→남), 구례구역은 순천 구역
+        jeolla = by_name["전라선"]
+        self.assertEqual(flat("전라선")[0], "익산")
+        self.assertEqual(flat("전라선")[-1], "여수엑스포")
+        self.assertIn(["구례구", "순천"], names("전라선"))
+        self.assertEqual([z for z, ks in jeolla["parts"] if "3900271" in ks], ["L1051200"])
+        # 경전선: 서→동, 벌교는 보성 구역
+        self.assertLess(flat("경전선").index("광주송정"), flat("경전선").index("순천"))
+        self.assertLess(flat("경전선").index("순천"), flat("경전선").index("진주"))
+        self.assertIn("벌교", next(group for (zone, _), group in zip(by_name["경전선"]["parts"], names("경전선")) if zone == "L1050900"))
+        # 역이 없는 구역도 빠지지 않는다 (전라선은 곡성남부를 지나지만 그 안에 역이 없다)
+        self.assertIn("L1052920", [z for z, _ in jeolla["parts"]])
+        # 이웃 노선의 역이 섞이지 않는다
+        self.assertNotIn("거제해맞이", flat("경부고속선"))
+        self.assertTrue(by_name["경부고속선"]["fast"])
+
     def test_page_has_every_element_the_script_uses(self):
         import re
 
@@ -445,13 +482,36 @@ class RailPageTest(unittest.TestCase):
         self.assertNotIn("gis.korail.com", script)  # 코레일 화면의 내부 주소를 직접 부르지 않는다
         self.assertNotIn("gis.korail.com", (self.WEB / "live.js").read_text(encoding="utf-8"))
 
-    def test_both_pages_link_to_each_other_and_work_offline(self):
-        index = (self.WEB / "index.html").read_text(encoding="utf-8")
-        self.assertIn('href="rail.html"', index)
-        self.assertIn('href="./"', (self.WEB / "rail.html").read_text(encoding="utf-8"))
+    def test_three_pages_share_tabs_and_work_offline(self):
+        import re
+
+        pages = {name: (self.WEB / name).read_text(encoding="utf-8") for name in ("index.html", "rail.html", "analysis.html")}
+        current = {"index.html": "./", "rail.html": "rail.html", "analysis.html": "analysis.html"}
+        for name, html in pages.items():
+            nav = re.search(r'<nav class="tabs".*?</nav>', html, re.S).group(0)
+            self.assertEqual(re.findall(r'<a href="([^"]+)"', nav), ["./", "rail.html", "analysis.html"], name)
+            self.assertEqual(re.findall(r'<a href="([^"]+)" aria-current="page"', nav), [current[name]], name)
+            self.assertEqual(re.findall(r">([^<]+)</a>", nav), ["특보 전망", "지금 지도", "분석"], name)
+            self.assertIn("참고용입니다. 공식 특보·예비특보가 우선합니다.", html, name)
+            self.assertIn('class="lede"', html, name)  # 화면마다 무엇을 보여 주는지 한 줄
         worker = (self.WEB / "sw.js").read_text(encoding="utf-8")
-        for name in ("rail.html", "rail.js", "live.js", "geo/zones.json", "geo/rail.json", "geo/stations.json"):
+        for name in ("rail.html", "rail.js", "live.js", "analysis.html", "analysis.js", "ui.js", "geo/zones.json", "geo/rail.json", "geo/stations.json", "geo/lines.json"):
             self.assertIn(name, worker)
+
+    def test_analysis_page_has_every_element_the_script_uses(self):
+        import re
+
+        html = (self.WEB / "analysis.html").read_text(encoding="utf-8")
+        script = (self.WEB / "analysis.js").read_text(encoding="utf-8")
+        ids = set(re.findall(r'\$\("([\w-]+)"\)', script))
+        self.assertGreaterEqual(len(ids), 6)
+        for name in ids:
+            self.assertIn(f'id="{name}"', html, name)
+        self.assertLess(html.index("ui.js"), html.index("analysis.js"))
+        self.assertIn("원인", html)  # 상관과 원인을 구분하는 설명
+        # 분석은 한곳에: 다른 화면에는 통계 구역을 두지 않는다
+        self.assertNotIn('id="delay"', (self.WEB / "rail.html").read_text(encoding="utf-8"))
+        self.assertNotIn('id="accuracy"', (self.WEB / "index.html").read_text(encoding="utf-8"))
 
     def test_pages_have_elements_for_live_data(self):
         import re
@@ -461,8 +521,7 @@ class RailPageTest(unittest.TestCase):
         app = (self.WEB / "app.js").read_text(encoding="utf-8")
         for name in set(re.findall(r'\$\("([\w-]+)"\)', app)):
             self.assertIn(f'id="{name}"', index, name)
-        self.assertIn('id="radar"', index)  # 첫 화면: 레이더 그림
-        for name in ("radar-toggle", "radar-bar", "radar-time", "radar-play", "radar-scale"):  # 철도 지도: 지도에 겹쳐 보기
+        for name in ("radar-toggle", "radar-bar", "radar-time", "radar-play", "radar-scale", "now-summary", "line-status"):  # 지도: 레이더 겹쳐 보기, 요약, 노선별 현황
             self.assertIn(f'id="{name}"', rail, name)
         for page in (index, rail):
             self.assertIn('id="live-status"', page)

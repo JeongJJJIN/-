@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>특보·철도 지도 · 기상특보 가능성</title>
+  <title>지금 지도 (특보·철도·레이더) · 기상특보 가능성</title>
   <meta name="description" content="전국 철도 노선과 역 위에 현재 기상특보 구역을 표시하고, 전날까지의 열차 지연과 특보의 관계를 보여 줍니다. 참고용이며 공식 발표가 우선합니다.">
   <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
@@ -21,19 +21,26 @@
   <header class="masthead">
     <div class="wrap">
       <div class="title-row">
-        <h1>특보·철도 지도</h1>
+        <h1>지금 지도</h1>
         <p class="updated" id="updated" aria-live="polite">불러오는 중…</p>
       </div>
       <p class="live-status" id="live-status" role="status" hidden></p>
       <nav class="tabs" aria-label="화면 이동">
-        <a href="./">특보 가능성</a>
-        <a href="rail.html" aria-current="page">지도 (특보·철도·레이더)</a>
+        <a href="./">특보 전망</a>
+        <a href="rail.html" aria-current="page">지금 지도</a>
+        <a href="analysis.html">분석</a>
       </nav>
+      <p class="lede">지금 발효 중인 특보와 철도 노선·역, 비구름을 한 지도에서 봅니다.</p>
     </div>
   </header>
 
   <main class="wrap" id="main">
     <div id="alerts"></div>
+
+    <section class="block first" aria-labelledby="h-summary">
+      <h2 id="h-summary" class="visually-hidden">지금 요약</h2>
+      <div class="tiles summary-tiles" id="now-summary"></div>
+    </section>
 
     <section class="block" aria-labelledby="h-map">
       <div class="block-head">
@@ -60,6 +67,22 @@
       <div id="picked" class="panel picked" aria-live="polite"></div>
     </section>
 
+    <section class="block" aria-labelledby="h-rain">
+      <div class="block-head">
+        <h2 id="h-rain">선로 강우 실황</h2>
+        <p class="hint" id="rain-hint">기상청 레이더 영상을 5분마다 읽어, 선로 위(둘레 약 2km)의 비 세기를 노선별로 계산합니다.</p>
+      </div>
+      <div id="rain-status" class="panel"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-lines">
+      <div class="block-head">
+        <h2 id="h-lines">노선별 특보 현황</h2>
+        <p class="hint">지금 특보·예비특보 구역을 지나는 노선입니다. 구역 이름을 누르면 지도에서 보여 줍니다. 위의 특보 종류를 고르면 그 종류만 봅니다.</p>
+      </div>
+      <div id="line-status" class="panel"></div>
+    </section>
+
     <section class="block" aria-labelledby="h-live">
       <div class="block-head">
         <h2 id="h-live">실시간 열차 위치 (코레일 제공 화면)</h2>
@@ -71,31 +94,24 @@
       </div>
     </section>
 
-
     <section class="block" aria-labelledby="h-list">
       <h2 id="h-list">특보 발효 구역 목록</h2>
       <div id="warning-list" class="panel"></div>
-    </section>
-
-    <section class="block" aria-labelledby="h-delay">
-      <div class="block-head">
-        <h2 id="h-delay">열차 지연과 특보 (지난 운행 기록)</h2>
-        <p class="hint" id="delay-period"></p>
-      </div>
-      <div id="delay"></div>
     </section>
 
     <section class="block" aria-labelledby="h-about">
       <h2 id="h-about">자료와 한계</h2>
       <div class="about">
         <details>
-          <summary>어떻게 계산하나요</summary>
+          <summary>이 지도가 보여 주는 것</summary>
           <div class="inner">
             <ul>
-              <li><b>종착 지연</b>: 종착역 실제 도착 시각 − 계획 도착 시각. 일찍 도착한 열차는 0분으로 셉니다. 역별 계획 시각은 공개되지 않아 종착역 기준만 계산합니다.</li>
-              <li><b>특보 구간 통과</b>: 열차가 정차한 역이 속한 특보구역에, 그 역을 지난 시각에 특보가 발효 중이었던 경우입니다. 정차하지 않고 지나간 구역은 반영되지 않습니다.</li>
-              <li>특보와 지연이 <b>같은 때 일어났다</b>는 것을 보여 줄 뿐, 특보가 지연의 원인이라는 뜻은 아닙니다. 사고·고장·선로 작업 등 다른 원인이 섞여 있습니다.</li>
-              <li>운행 기록은 코레일이 전날 것까지만, 다음 날 오전에 공개하므로 통계는 하루쯤 늦습니다. 열차 종류는 열차번호 대역으로 나눈 것입니다.</li>
+              <li><b>특보 구역</b>: 기상청이 발표한 특보·예비특보를 특보구역 단위로 칠합니다. 몇 분 간격으로 다시 확인하며, 확인 시각을 위에 적습니다.</li>
+              <li><b>노선별 특보 현황</b>: 노선을 따라 약 1km 마다 어느 특보구역인지 확인해 둔 자료로, 지금 특보 구역을 지나는 노선과 그 구역 안의 역을 보여 줍니다. 열차가 실제로 영향을 받는지는 알 수 없습니다.</li>
+              <li><b>비구름 레이더</b>: 기상청 레이더 합성영상(5분 간격)의 비구름 색만 같은 좌표에 겹칩니다.</li>
+              <li><b>선로 강우 실황</b>: 같은 영상의 색을 범례의 강수 강도 구간으로 되돌려, 선로를 따라 약 1km 마다 찍은 4,500여 점에서 읽은 값입니다. 점마다 둘레 1화소(약 1.7km)에서 가장 센 값을 씁니다. <b>우량계 관측이 아니라 레이더 추정</b>이며 색 구간(예: 5~6mm/h)으로만 알 수 있습니다. 1시간 누적은 구간 가운데 값을 5분씩 더한 추정입니다. 지도의 선로 위 색 점이 이 값입니다.</li>
+              <li><b>점무늬(가능성)</b>: 이 서비스가 계산한 향후 48시간 특보 가능성으로, 계산 대상 지역(전남)에만 있습니다.</li>
+              <li>열차가 얼마나 늦었는지는 <a href="analysis.html">분석</a>에서 봅니다.</li>
             </ul>
           </div>
         </details>
@@ -105,9 +121,9 @@
             <ul>
               <li>특보·예비특보: 기상청 (공공데이터포털 기상특보 조회서비스)</li>
               <li>특보구역 경계: 기상청 날씨누리 특보구역(2026-06-01 기준)을 단순화해 사용</li>
-              <li>비구름 레이더: 기상청 레이더 합성영상(5분 간격)을 같은 지도 좌표에 겹쳐 표시. 영상 자체의 해안선·경계선이 함께 보입니다</li>
-              <li>열차 운행 기록: 한국철도공사 열차운행정보 (공공데이터포털)</li>
+              <li>비구름 레이더: 기상청 레이더 합성영상</li>
               <li>철도 노선·역 위치: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a> (ODbL), 가공해 사용. 역코드는 한국철도공사 자료와 연결</li>
+              <li>실시간 열차 위치: 한국철도공사 열차위치 화면(그대로 표시)</li>
             </ul>
           </div>
         </details>
@@ -118,7 +134,7 @@
   <footer class="foot">
     <div class="wrap">
       <p>이 화면은 공개 자료를 기계적으로 종합한 <strong>참고 자료</strong>입니다. 열차 운행 여부와 지연은 <a href="https://www.korail.com" rel="noopener">코레일</a>의 안내를, 기상특보는 <a href="https://www.weather.go.kr/w/special-report/overall.do" rel="noopener">기상청 날씨누리</a>를 확인하세요.</p>
-      <p class="credits">기상자료: 기상청 · 열차 운행 기록: 한국철도공사 · 지도: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a></p>
+      <p class="credits">기상자료: 기상청 · 열차 화면: 한국철도공사 · 지도: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a></p>
     </div>
   </footer>
 

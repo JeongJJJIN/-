@@ -3,7 +3,8 @@
  * 캐시 이름의 빌드 번호(__BUILD__)는 배포 때 바뀌어, 새 버전이 깔리면 옛 캐시를 지운다.
  */
 const CACHE = "teukbo-__BUILD__";
-const SHELL = ["./", "index.html", "style.css?v=__BUILD__", "live.js?v=__BUILD__", "app.js?v=__BUILD__", "rail.html", "rail.js?v=__BUILD__", "geo/zones.json", "geo/rail.json", "geo/stations.json", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png"];
+const SHELL = ["./", "index.html", "style.css?v=__BUILD__", "live.js?v=__BUILD__", "app.js?v=__BUILD__", "rail.html", "rail.js?v=__BUILD__", "analysis.html", "ui.js?v=__BUILD__", "analysis.js?v=__BUILD__",
+  "geo/zones.json", "geo/rail.json", "geo/stations.json", "geo/lines.json", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png"];
 const NETWORK_TIMEOUT_MS = 6000;
 
 self.addEventListener("install", (event) => {

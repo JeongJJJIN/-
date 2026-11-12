@@ -11,6 +11,8 @@
   web/geo/zones.json     특보구역 다각형 {code: {n: 이름, c: [경도, 위도] 대표점, p: [[고리…]…]}}  (고리 = [경도,위도,경도,위도,…])
   web/geo/rail.json      철도 노선 [{name, fast, paths: [[경도,위도,…]…]}]
   web/geo/stations.json  역 [{code, name, lon, lat, zone}]  — 수집부(teukbo.rail)도 이 파일로 역 → 특보구역을 찾는다
+  web/geo/lines.json     노선이 지나는 특보구역(순서대로)과 그 안의 역 [{name, fast, parts: [[구역 코드, [역 키…]], …]}]
+  config/rail_samples.json   선로를 따라 약 1km 마다 찍은 표본점 [{name, samples: [[경도, 위도, 구역 코드], …]}] — 레이더 강우 읽기용
 
     python3 tools/build_geodata.py --zones wrn_land_8.geojson --zones-full wrnArea.geojson \\
         --rail lines_geom.json --stations stations.json --codes station_codes.csv
@@ -135,6 +137,11 @@ class ZoneLocator:
             xs = [p[0] for poly in polys for p in poly[0]]
             ys = [p[1] for poly in polys for p in poly[0]]
             self.shapes.append((code, (min(xs), min(ys), max(xs), max(ys)), polys))
+
+    def center(self, code: str) -> tuple[float, float]:
+        """구역의 대략적인 가운데(테두리 상자의 중심)."""
+        x0, y0, x1, y1 = next(box for c, box, _ in self.shapes if c == code)
+        return (x0 + x1) / 2, (y0 + y1) / 2
 
     def find(self, lon: float, lat: float) -> tuple[str | None, bool]:
         for code, (x0, y0, x1, y1), polys in self.shapes:
@@ -374,6 +381,136 @@ def build_stations(path: Path, code_rows: list[tuple[str, str, str]], locator: Z
     return sorted(stations.values(), key=lambda s: (s["code"] or "~", s["name"]))
 
 
+# ---------------------------------------------------------------- 노선이 지나는 특보구역·역 (노선별 특보 현황용)
+
+LINE_SAMPLE_STEP = 0.01  # 노선을 따라 구역을 확인하는 간격(도) ≈ 1km
+LINE_STATION_KM = 0.15  # 선로에서 이 거리 안의 역을 그 노선 위의 역으로 본다 (실제 역은 0.1km 안, 이웃 노선의 역은 0.5km 이상 떨어져 있다)
+LINE_JOIN_KM = 5.0  # 끝점이 이만큼 가까운 선은 이어진 것으로 본다
+
+
+def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return math.hypot((a[0] - b[0]) * math.cos(math.radians((a[1] + b[1]) / 2)) * 111.2, (a[1] - b[1]) * 111.2)
+
+
+def _chain(paths: list[list[tuple[float, float]]]) -> list[list[tuple[float, float]]]:
+    """끝점이 가까운 선끼리 이어 붙여 한 줄로 만든다(방향을 맞춰서). 이어지지 않는 선은 따로 남는다."""
+    rest = sorted(paths, key=length, reverse=True)
+    chains: list[list[tuple[float, float]]] = []
+    while rest:
+        chain = rest.pop(0)
+        grown = True
+        while grown and rest:
+            grown = False
+            best = None
+            for i, cand in enumerate(rest):
+                for at_tail, flip, d in ((True, False, _km(chain[-1], cand[0])), (True, True, _km(chain[-1], cand[-1])), (False, False, _km(chain[0], cand[-1])), (False, True, _km(chain[0], cand[0]))):
+                    if d <= LINE_JOIN_KM and (best is None or d < best[0]):
+                        best = (d, i, at_tail, flip)
+            if best is not None:
+                _, i, at_tail, flip = best
+                cand = rest.pop(i)
+                cand = cand[::-1] if flip else cand
+                chain = chain + cand if at_tail else cand + chain
+                grown = True
+        chains.append(chain)
+    return chains
+
+
+def build_lines(rail: list[dict], stations: list[dict], locator: ZoneLocator) -> tuple[list[dict], list[dict]]:
+    """노선마다, 지나가는 특보구역을 순서대로 적고 그 구역 안의 역을 붙인다. 함께, 선로를 따라 찍은 표본점도 돌려준다.
+
+    표본점 [{name, samples: [[경도, 위도, 구역 코드], …]}] 은 레이더 영상에서 선로 위의 강우를 읽는 데 쓴다(teukbo.radar).
+
+    [{name, fast, parts: [[구역 코드, [역 키…]], …]}] — 역 키는 화면(rail.js)과 같은 규칙: 역코드, 없으면 "name:역명".
+    구역은 노선을 따라 약 1km 마다 확인하므로, 역이 없는 구역도 빠지지 않는다.
+    """
+    seen_place: dict[tuple[str, float, float], str] = {}
+    places = []  # 같은 자리의 같은 이름(코드만 다른 역)은 한 번만
+    for st in stations:
+        label = st["name"][1:] if st["name"].startswith("S") and len(st["name"]) > 1 and "가" <= st["name"][1] <= "힣" else st["name"]
+        spot = (label, round(st["lon"], 2), round(st["lat"], 2))
+        if spot in seen_place:
+            continue
+        seen_place[spot] = st["code"] or f"name:{st['name']}"
+        places.append((seen_place[spot], (st["lon"], st["lat"]), st["zone"]))
+
+    out = []
+    sample_out = []
+    for line in rail:
+        parts: list[list] = []
+        points: list[list] = []
+        for chain in _chain([list(zip(c[0::2], c[1::2])) for c in line["paths"]]):
+            # 노선을 따라 표본점(누적 거리, 구역)
+            samples: list[tuple[float, str]] = []
+            along = 0.0
+            cum = [0.0]
+            for a, b in zip(chain[:-1], chain[1:]):
+                seg = _km(a, b)
+                n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / LINE_SAMPLE_STEP))
+                for k in range(n):
+                    t = k / n
+                    lon, lat = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+                    zone, _exact = locator.find(lon, lat)
+                    if zone:
+                        samples.append((along + seg * t, zone))
+                        points.append([round(lon, 3), round(lat, 3), zone])
+                along += seg
+                cum.append(along)
+            runs: list[list] = []  # [구역, 시작 거리, 끝 거리, [역…]]
+            for at, zone in samples:
+                if runs and runs[-1][0] == zone:
+                    runs[-1][2] = at
+                else:
+                    runs.append([zone, at, at, []])
+            # 이 선에 붙은 역: 선분에 내린 수선의 발까지 거리와 누적 거리
+            for key, pos, own_zone in places:
+                best = None
+                for i, (a, b) in enumerate(zip(chain[:-1], chain[1:])):
+                    cos = math.cos(math.radians(pos[1]))
+                    ax, ay, bx, by, px, py = a[0] * cos, a[1], b[0] * cos, b[1], pos[0] * cos, pos[1]
+                    dx, dy = bx - ax, by - ay
+                    t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+                    d = math.hypot(px - (ax + dx * t), py - (ay + dy * t)) * 111.2
+                    if best is None or d < best[0]:
+                        best = (d, cum[i] + (cum[i + 1] - cum[i]) * t)
+                if best is None or best[0] > LINE_STATION_KM:
+                    continue
+                # 역은 늘 자기 특보구역 아래에 적는다(구역 경계 근처에서는 선로 위의 가장 가까운 점이 옆 구역일 수 있다)
+                same = [r for r in runs if r[0] == own_zone]
+                if same:
+                    run = min(same, key=lambda r: 0.0 if r[1] <= best[1] <= r[2] else min(abs(best[1] - r[1]), abs(best[1] - r[2])))
+                else:
+                    run = [own_zone, best[1], best[1], []]
+                    runs.append(run)
+                run[3].append((best[1], key))
+            for zone, _start, _end, found in runs:
+                keys = [k for _, k in sorted(found)]
+                if parts and parts[-1][0] == zone:
+                    parts[-1][1].extend(k for k in keys if k not in parts[-1][1])
+                else:
+                    parts.append([zone, keys])
+        # 한 구역은 한 번만(노선이 구역을 드나들거나 선을 이어 붙인 자리에서 겹친다), 한 역도 한 번만
+        merged: dict[str, list[str]] = {}
+        for zone, keys in parts:
+            bucket = merged.setdefault(zone, [])
+            bucket.extend(k for k in keys if k not in bucket)
+        used: set[str] = set()
+        for zone in merged:
+            merged[zone] = [k for k in merged[zone] if not (k in used or used.add(k))]
+        # 읽기 좋게 노선의 긴 방향(동서 또는 남북)으로 늘어놓는다 — 북→남, 서→동
+        spot = {key: pos for key, pos, _zone in places}
+        centers = {zone: locator.center(zone) for zone in merged}
+        lons = [c[0] for c in centers.values()]
+        lats = [c[1] for c in centers.values()]
+        east_west = (max(lons) - min(lons)) * math.cos(math.radians(sum(lats) / len(lats))) > (max(lats) - min(lats))
+        axis = (lambda pos: pos[0]) if east_west else (lambda pos: -pos[1])
+        parts = [[zone, sorted(merged[zone], key=lambda k: axis(spot[k]))] for zone in sorted(merged, key=lambda z: axis(centers[z]))]
+        out.append({"name": line["name"], "fast": line["fast"], "parts": parts})
+        sample_out.append({"name": line["name"], "samples": points})
+        print(f"    {line['name']:22s} 구역 {len(parts):3d}개, 역 {sum(len(p[1]) for p in parts):3d}곳, 표본점 {len(points):4d}개")
+    return out, sample_out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="지도용 지리 자료 만들기")
     parser.add_argument("--zones", type=Path, required=True)
@@ -397,6 +534,10 @@ def main() -> int:
     print("역")
     stations = build_stations(args.stations, read_codes(args.codes), ZoneLocator(args.zones_full, table))
     write(args.out / "stations.json", stations)
+    print("노선이 지나는 구역·역")
+    lines, samples = build_lines(rail, stations, ZoneLocator(args.zones_full, table))
+    write(args.out / "lines.json", lines)
+    write(ROOT / "config" / "rail_samples.json", samples)  # 서버(teukbo.radar)만 쓴다 → 웹 폴더에 두지 않는다
     without = [s["name"] for s in stations if not s["zone"]]
     print(f"  역 {len(stations)}곳" + (f", 특보구역을 찾지 못한 역: {', '.join(without)}" if without else ", 모두 특보구역 연결됨"))
     return 0

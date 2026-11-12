@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>분석 · 기상특보 가능성</title>
+  <meta name="description" content="특보가 내려진 구간을 지난 열차가 얼마나 늦었는지, 특보 가능성 예측이 얼마나 맞았는지를 쌓인 자료로 보여 줍니다. 참고용이며 공식 발표가 우선합니다.">
+  <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css?v=__BUILD__">
+</head>
+<body>
+  <div class="notice" role="note">
+    <svg class="notice-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 18.5 17h-17L10 2.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 8v4.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="14.6" r="1" fill="currentColor"/></svg>
+    <span>참고용입니다. 공식 특보·예비특보가 우선합니다.</span>
+  </div>
+
+  <header class="masthead">
+    <div class="wrap">
+      <div class="title-row">
+        <h1>분석</h1>
+        <p class="updated" id="updated" aria-live="polite">불러오는 중…</p>
+      </div>
+      <nav class="tabs" aria-label="화면 이동">
+        <a href="./">특보 전망</a>
+        <a href="rail.html">지금 지도</a>
+        <a href="analysis.html" aria-current="page">분석</a>
+      </nav>
+      <p class="lede">쌓인 자료로 답합니다 — 특보가 내려진 구간을 지난 열차는 얼마나 늦었나, 이 서비스의 예측은 얼마나 맞았나.</p>
+    </div>
+  </header>
+
+  <main class="wrap" id="main">
+    <div id="alerts"></div>
+
+    <section class="block" aria-labelledby="h-summary">
+      <h2 id="h-summary">핵심 요약</h2>
+      <div class="panel" id="summary"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-delay">
+      <div class="block-head">
+        <h2 id="h-delay">열차 지연 × 특보</h2>
+        <p class="hint" id="delay-period"></p>
+      </div>
+      <div id="delay"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-accuracy">
+      <div class="block-head">
+        <h2 id="h-accuracy">예측 적중률</h2>
+        <p class="hint" id="accuracy-period"></p>
+      </div>
+      <div id="accuracy"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-about">
+      <h2 id="h-about">분석 방법과 한계</h2>
+      <div class="about">
+        <details>
+          <summary>열차 지연 × 특보는 이렇게 계산합니다</summary>
+          <div class="inner">
+            <ul>
+              <li><b>종착 지연</b>: 종착역 실제 도착 시각 − 계획 도착 시각. 일찍 도착한 열차는 0분으로 셉니다. 역별 계획 시각은 공개되지 않아 종착역 기준만 계산합니다.</li>
+              <li><b>특보 구간 통과</b>: 열차가 정차한 역이 속한 특보구역에, 그 역을 지난 시각에 특보가 발효 중이었던 경우입니다. 정차하지 않고 지나간 구역은 반영되지 않습니다.</li>
+              <li><b>같은 노선끼리 비교</b>: 노선마다 평소 지연이 다르므로, 노선별로 ‘특보 구간을 지난 열차 − 지나지 않은 열차’의 평균 차이를 구해 열차 수로 가중 평균합니다. 95% 구간은 정규 근사입니다.</li>
+              <li>특보와 지연이 <b>같은 때 일어났다</b>는 것을 보여 줄 뿐, 특보가 지연의 원인이라는 뜻은 아닙니다. 사고·고장·선로 작업, 요일·시간대의 차이가 섞여 있습니다.</li>
+              <li>운행 기록은 코레일이 전날 것까지만, 다음 날 오전에 공개하므로 통계는 하루쯤 늦습니다. 열차 종류는 열차번호 대역으로 나눈 것입니다. 광역전철은 포함되지 않습니다.</li>
+            </ul>
+          </div>
+        </details>
+        <details>
+          <summary>자료 출처</summary>
+          <div class="inner">
+            <ul>
+              <li>열차 운행 기록: 한국철도공사 열차운행정보 (공공데이터포털)</li>
+              <li>특보 발표·해제 이력: 기상청 기상특보 조회서비스 (공공데이터포털)</li>
+              <li>역 ↔ 특보구역 연결: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a> (ODbL)의 역 위치와 기상청 특보구역 경계</li>
+              <li>적중률: 이 서비스가 3시간마다 기록한 예측과 기상청 특보 발효 기록</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <p>이 화면은 공개 자료를 기계적으로 집계한 <strong>참고 자료</strong>입니다. 열차 운행 여부와 지연은 <a href="https://www.korail.com" rel="noopener">코레일</a>의 안내를, 기상특보는 <a href="https://www.weather.go.kr/w/special-report/overall.do" rel="noopener">기상청 날씨누리</a>를 확인하세요.</p>
+      <p class="credits">기상자료: 기상청 · 열차 운행 기록: 한국철도공사 · 역 위치: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a></p>
+    </div>
+  </footer>
+
+  <noscript><p class="noscript">이 페이지는 자바스크립트가 필요합니다.</p></noscript>
+  <script src="ui.js?v=__BUILD__" defer></script>
+  <script src="analysis.js?v=__BUILD__" defer></script>
+</body>
+</html>
