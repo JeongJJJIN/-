@@ -3,18 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>기상특보 가능성 · 전남</title>
-  <meta name="description" content="여러 수치예보를 종합해 전남 시·군별 기상특보 발효 가능성과 예상 시간대를 보여 줍니다. 참고용이며 공식 특보·예비특보가 우선합니다.">
+  <title>기상특보 가능성</title>
+  <meta name="description" content="지역을 고르면 앞으로 48시간 안에 기상특보가 내려질 가능성을 보여 줍니다. 참고용이며 공식 특보·예비특보가 우선합니다.">
   <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="특보 가능성">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css?v=__BUILD__">
 </head>
-<body>
+<body class="home">
   <div class="notice" role="note">
     <svg class="notice-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 18.5 17h-17L10 2.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 8v4.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="14.6" r="1" fill="currentColor"/></svg>
     <span>참고용입니다. 공식 특보·예비특보가 우선합니다.</span>
@@ -26,78 +24,36 @@
         <h1>기상특보 가능성</h1>
         <p class="updated" id="updated" aria-live="polite">불러오는 중…</p>
       </div>
-      <p class="live-status" id="live-status" role="status" hidden></p>
-      <nav class="tabs" aria-label="화면 이동">
-        <a href="./" aria-current="page">특보 전망</a>
-        <a href="rail.html">지금 지도</a>
-        <a href="analysis.html">분석</a>
-      </nav>
-      <p class="lede">여러 예보를 비교해, 앞으로 48시간 안에 특보가 내려질 가능성과 예상 시간대를 지역별로 계산합니다.</p>
-      <div class="region-row">
-        <label class="region-label" for="region">지역</label>
-        <div class="select-wrap">
-          <select id="region" aria-describedby="updated"></select>
-        </div>
-        <a class="jump" href="#overview">전체 지역 현황</a>
-      </div>
     </div>
   </header>
 
   <main class="wrap" id="main">
     <div id="alerts"></div>
 
-    <section class="block" aria-labelledby="h-official">
-      <h2 id="h-official">현재 발효 특보·예비특보</h2>
-      <div id="official" class="panel"></div>
+    <section class="finder" aria-label="지역 찾기">
+      <label class="finder-label" for="q">지역</label>
+      <input type="search" id="q" class="finder-input" placeholder="지역 이름을 입력하세요 (예: 순천)" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+      <div class="finder-matches" id="matches" role="group" aria-label="찾은 지역"></div>
     </section>
 
-    <section class="block" id="now-block" aria-labelledby="h-now" hidden>
-      <div class="block-head">
-        <h2 id="h-now">지금 날씨와 앞으로 6시간</h2>
-        <p class="hint" id="now-hint"></p>
-      </div>
-      <div id="now"></div>
-    </section>
+    <section id="result" aria-live="polite" aria-label="고른 지역의 특보 가능성"></section>
 
-    <section class="block" aria-labelledby="h-hazards">
-      <div class="block-head">
-        <h2 id="h-hazards">향후 <span id="horizon">48</span>시간 특보 가능성</h2>
-        <p class="hint" id="models-line"></p>
-      </div>
-      <div id="hazards"></div>
-    </section>
-
-    <section class="block" aria-labelledby="h-outlook">
-      <div class="block-head">
-        <h2 id="h-outlook">철도 구간 전망</h2>
-        <p class="hint">향후 <span id="horizon2">48</span>시간 안에 ‘주의’ 이상으로 계산된 지역을 지나는 노선입니다(계산 대상 지역 기준).</p>
-      </div>
-      <div id="rail-outlook" class="panel"></div>
-    </section>
-
-    <section class="block" id="overview" aria-labelledby="h-overview">
-      <div class="block-head">
-        <h2 id="h-overview">전체 지역 현황</h2>
-        <p class="hint">지역별로 가장 높은 등급을 보여 줍니다. 누르면 그 지역으로 바뀝니다.</p>
-      </div>
-      <div id="region-grid" class="region-grid"></div>
-    </section>
-
-    <section class="block" aria-labelledby="h-about">
-      <h2 id="h-about">계산 방식과 데이터 출처</h2>
-      <div id="about" class="about"></div>
+    <section class="home-map" aria-label="지역별 특보 가능성 지도">
+      <div id="map"></div>
+      <ul class="legend" id="legend"></ul>
     </section>
   </main>
 
   <footer class="foot">
     <div class="wrap">
-      <p>이 서비스는 여러 예보를 기계적으로 종합한 <strong>참고 자료</strong>입니다. 실제 특보는 예보관이 종합 판단해 발표하므로 계산 결과와 다를 수 있습니다. 비상근무 등 의사결정은 반드시 <a href="https://www.weather.go.kr/w/special-report/overall.do" rel="noopener">기상청 날씨누리의 공식 특보·예비특보</a>를 확인하세요.</p>
+      <p>가능성은 여러 예보(기상청 단기예보·ECMWF·GFS·ICON·JMA)가 앞으로 48시간 안에 특보 기준을 넘기는 정도를 점수로 만든 <strong>참고값</strong>입니다. 실제 특보는 <a href="https://www.weather.go.kr/w/special-report/overall.do" rel="noopener">기상청 날씨누리의 공식 특보·예비특보</a>를 확인하세요.</p>
       <p class="credits">기상자료: 기상청(공공데이터포털·API허브) · <a href="https://open-meteo.com/" rel="noopener">Weather data by Open-Meteo.com</a> (<a href="https://creativecommons.org/licenses/by/4.0/" rel="noopener">CC BY 4.0</a>, 가공하여 사용)</p>
     </div>
   </footer>
 
   <noscript><p class="noscript">이 페이지는 자바스크립트가 필요합니다.</p></noscript>
+  <script src="ui.js?v=__BUILD__" defer></script>
   <script src="live.js?v=__BUILD__" defer></script>
-  <script src="app.js?v=__BUILD__" defer></script>
+  <script src="home.js?v=__BUILD__" defer></script>
 </body>
 </html>

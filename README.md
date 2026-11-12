@@ -34,7 +34,7 @@ GitHub Actions (3시간마다)                                   GitHub Pages
 | `config/` | 지역, 특보 기준, 계산 파라미터 (코드 수정 없이 여기만 고치면 됩니다) |
 | `teukbo/` | 수집·계산·저장 파이썬 패키지 (표준 라이브러리만 사용) |
 | `tests/` | 단위 테스트 (`python3 -m unittest discover -s tests -t .`) |
-| `web/` | 정적 웹 화면(특보 전망 `index.html` · 지금 지도 `rail.html` · 분석 `analysis.html`)과 PWA 설정 (`web/geo/` 는 지도용 지리 자료 — [web/geo/README.md](web/geo/README.md)) |
+| `web/` | 정적 웹 화면과 PWA 설정. 첫 화면 `index.html`(+`home.js`)은 **지역 찾기 → 그 지역의 특보 가능성 → 지도** 이것만 보여 준다. 예전의 자세한 화면(`full.html` 모델 비교, `rail.html` 철도·레이더 지도, `analysis.html` 참고 자료)은 지우지 않고 남겨 두되 첫 화면에서 잇지 않는다 (`web/geo/` 는 지도용 지리 자료 — [web/geo/README.md](web/geo/README.md)) |
 | `data/` | 누적 이력, 적중률, 열차 지연 집계 — [data/README.md](data/README.md) |
 | `tools/` | 한 번만 쓰는 도구 (`build_geodata.py`: 지도용 지리 자료 만들기, `radar_calibrate.py`: 레이더 영상 위치 맞추기 — numpy·opencv 필요) |
 | `.github/workflows/` | `collect.yml`(3시간마다 수집·계산·배포), `live.yml`(5분마다 실시간 자료), `test.yml`(테스트) |
