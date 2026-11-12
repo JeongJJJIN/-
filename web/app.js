@@ -692,7 +692,7 @@
             h("div", null,
               h("p", { class: "outlook-main" }, h("button", { class: "linklike", type: "button", onclick: () => { selectRegion(r.id); window.scrollTo({ top: 0, behavior: "smooth" }); } }, r.name),
                 ` · ${hazardName[r.top.hazard] || r.top.hazard}`, r.top.p != null && r.top.grade !== "active" ? ` ${r.top.p}%` : ""),
-              h("p", { class: "outlook-sub", text: [when, stations.length ? `구간의 역: ${stations.join(", ")}` : "구간에 역 없음"].filter(Boolean).join(" · ") })));
+              h("p", { class: "outlook-sub", text: [sum.official === "preliminary" ? "기상청 예비특보(그래서 ‘높음’ 이상)" : null, when, stations.length ? `구간의 역: ${stations.join(", ")}` : "구간에 역 없음"].filter(Boolean).join(" · ") })));
         }))));
     }
     box.append(list, h("p", { class: "note" }, "지역별 가능성을 노선에 옮겨 적은 것입니다(시·군청 위치 기준). 지금 발효 중인 전국 특보와 노선은 ", h("a", { href: "rail.html" }, "지금 지도"), "에서, 과거 특보 때의 열차 지연은 ", h("a", { href: "analysis.html" }, "분석"), "에서 봅니다."));
