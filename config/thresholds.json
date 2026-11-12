@@ -1,0 +1,170 @@
+{
+  "_doc": [
+    "기상특보 발표기준. 코드에는 기준값이 없으며 모든 수치는 이 파일에서 읽습니다.",
+    "기준이 바뀌면 이 파일만 고치고 version, checked_at 을 갱신하세요.",
+    "",
+    "indicators: 예측값에서 뽑는 지표.",
+    "  kind=rolling_sum     : variable 의 window_hours 시간 이동 누적 (예: 3시간 강수량)",
+    "  kind=hourly          : 시간별 값 그대로 (예: 풍속)",
+    "  kind=period_extreme  : 하루 중 start_hour 초과 ~ end_hour 이하 시간대의 최고(max)/최저(min). end_hour 가 start_hour 이하이면 다음 날까지 (18→9 = 18:01~다음 날 09:00)",
+    "  kind=period_change   : of 로 지정한 일 단위 지표의 전날 대비 변화 (음수 = 하강)",
+    "  variable: precip(mm) snow(cm) temp(℃) apparent(℃, 기상청 여름철 체감온도) wind(m/s) gust(m/s)",
+    "",
+    "hazards[].criteria: 나열된 기준 중 하나라도 만족하면 기준 초과(OR). {\"all\": [...]} 는 묶음 안을 모두 만족해야 함(AND).",
+    "  op/value          : 지표 값이 value 이상(>=)·초과(>)·이하(<=)·미만(<)",
+    "  consecutive_days  : 'N일 이상 지속' 조건 (일 단위 지표)",
+    "  baseline          : 도달률 계산의 0% 지점. 도달률 = (예측값 − baseline) / (value − baseline). 생략하면 0 → 도달률 = 예측값 / 기준값.",
+    "                      기온처럼 0이 의미 없는 지표와 '이하' 기준에 쓰는 계산용 보조값이며 공식 기준이 아닙니다.",
+    "  region_param      : 지역마다 기준값이 다를 때, regions.json 의 params 에서 읽을 키 (없으면 value 사용)",
+    "hazards[].months   : 특보 적용 기간(월). 생략하면 연중.",
+    "hazards[].method   : model = 예측값으로 계산, official_only = 계산하지 않고 기상청 발표(예비특보·특보)만 반영"
+  ],
+  "version": "2026-06-30",
+  "checked_at": "2026-11-12",
+  "source": "기상법 시행령 [별표 1] 특보의 기준 <개정 2026. 6. 23., 시행 2026. 6. 30.> · 기상청 날씨누리 기상특보 발표기준 https://www.weather.go.kr/w/forecast/guide/standard.do · 열대야주의보 지역별 기준: 예보업무규정 별표 12",
+  "levels": {
+    "advisory": {"name": "주의보", "rank": 1},
+    "warning": {"name": "경보", "rank": 2},
+    "severe": {"name": "중대경보", "rank": 3}
+  },
+  "types": {
+    "heavy_rain": {"name": "호우"},
+    "typhoon": {"name": "태풍"},
+    "strong_wind": {"name": "강풍"},
+    "heavy_snow": {"name": "대설"},
+    "cold_wave": {"name": "한파"},
+    "heat_wave": {"name": "폭염"},
+    "tropical_night": {"name": "열대야"}
+  },
+  "indicators": {
+    "rain_3h": {"kind": "rolling_sum", "variable": "precip", "window_hours": 3, "label": "3시간 누적강우량", "unit": "mm"},
+    "rain_12h": {"kind": "rolling_sum", "variable": "precip", "window_hours": 12, "label": "12시간 누적강우량", "unit": "mm"},
+    "wind": {"kind": "hourly", "variable": "wind", "label": "풍속", "unit": "m/s"},
+    "gust": {"kind": "hourly", "variable": "gust", "label": "순간풍속", "unit": "m/s"},
+    "snow_24h": {"kind": "rolling_sum", "variable": "snow", "window_hours": 24, "label": "24시간 신적설", "unit": "cm"},
+    "apparent_max": {"kind": "period_extreme", "variable": "apparent", "stat": "max", "start_hour": 0, "end_hour": 24, "label": "일 최고 체감온도", "unit": "℃"},
+    "temp_max": {"kind": "period_extreme", "variable": "temp", "stat": "max", "start_hour": 0, "end_hour": 24, "label": "일 최고기온", "unit": "℃"},
+    "night_min": {"kind": "period_extreme", "variable": "temp", "stat": "min", "start_hour": 18, "end_hour": 9, "label": "밤 최저기온", "unit": "℃"},
+    "morning_min": {"kind": "period_extreme", "variable": "temp", "stat": "min", "start_hour": 3, "end_hour": 9, "label": "아침 최저기온", "unit": "℃"},
+    "morning_drop": {"kind": "period_change", "of": "morning_min", "label": "아침 최저기온 전날 대비", "unit": "℃"}
+  },
+  "hazards": [
+    {
+      "id": "heavy_rain_advisory", "type": "heavy_rain", "level": "advisory", "name": "호우주의보",
+      "official_text": "3시간 누적강우량이 60mm 이상 예상되거나 12시간 누적강우량이 110mm 이상 예상될 때",
+      "criteria": [
+        {"indicator": "rain_3h", "op": ">=", "value": 60},
+        {"indicator": "rain_12h", "op": ">=", "value": 110}
+      ]
+    },
+    {
+      "id": "heavy_rain_warning", "type": "heavy_rain", "level": "warning", "name": "호우경보",
+      "official_text": "3시간 누적강우량이 90mm 이상 예상되거나 12시간 누적강우량이 180mm 이상 예상될 때",
+      "criteria": [
+        {"indicator": "rain_3h", "op": ">=", "value": 90},
+        {"indicator": "rain_12h", "op": ">=", "value": 180}
+      ]
+    },
+    {
+      "id": "typhoon_advisory", "type": "typhoon", "level": "advisory", "name": "태풍주의보", "method": "official_only",
+      "official_text": "태풍으로 인하여 강풍, 풍랑, 호우 또는 폭풍해일 현상이 주의보 기준에 도달할 것으로 예상될 때",
+      "note": "태풍 여부는 예측값만으로 판단할 수 없어 계산하지 않습니다. 기상청 예비특보·특보만 반영하며, 태풍이 접근하면 호우·강풍 가능성으로 나타납니다."
+    },
+    {
+      "id": "typhoon_warning", "type": "typhoon", "level": "warning", "name": "태풍경보", "method": "official_only",
+      "official_text": "태풍으로 인하여 강풍, 풍랑 또는 폭풍해일 현상이 경보 기준에 도달할 것으로 예상되거나 총 강우량이 200mm 이상 예상될 때",
+      "note": "계산하지 않고 기상청 예비특보·특보만 반영합니다."
+    },
+    {
+      "id": "strong_wind_advisory", "type": "strong_wind", "level": "advisory", "name": "강풍주의보",
+      "official_text": "육상에서 풍속 14m/s 이상 또는 순간풍속 20m/s 이상 예상될 때 (산지는 풍속 17m/s 이상 또는 순간풍속 25m/s 이상)",
+      "note": "전남에는 '산지' 특보구역이 없어 육상 기준만 적용합니다.",
+      "criteria": [
+        {"indicator": "wind", "op": ">=", "value": 14},
+        {"indicator": "gust", "op": ">=", "value": 20}
+      ]
+    },
+    {
+      "id": "strong_wind_warning", "type": "strong_wind", "level": "warning", "name": "강풍경보",
+      "official_text": "육상에서 풍속 21m/s 이상 또는 순간풍속 26m/s 이상 예상될 때 (산지는 풍속 24m/s 이상 또는 순간풍속 30m/s 이상)",
+      "criteria": [
+        {"indicator": "wind", "op": ">=", "value": 21},
+        {"indicator": "gust", "op": ">=", "value": 26}
+      ]
+    },
+    {
+      "id": "heavy_snow_advisory", "type": "heavy_snow", "level": "advisory", "name": "대설주의보",
+      "official_text": "24시간 동안 내려 쌓인 눈의 양이 5cm 이상 예상될 때",
+      "criteria": [
+        {"indicator": "snow_24h", "op": ">=", "value": 5}
+      ]
+    },
+    {
+      "id": "heavy_snow_warning", "type": "heavy_snow", "level": "warning", "name": "대설경보",
+      "official_text": "24시간 동안 내려 쌓인 눈의 양이 20cm 이상 예상될 때 (산지는 30cm 이상)",
+      "criteria": [
+        {"indicator": "snow_24h", "op": ">=", "value": 20}
+      ]
+    },
+    {
+      "id": "cold_wave_advisory", "type": "cold_wave", "level": "advisory", "name": "한파주의보",
+      "months": [10, 11, 12, 1, 2, 3, 4],
+      "official_text": "10월~4월 중 ① 아침 최저기온이 전날보다 10℃ 이상 하강하여 3℃ 이하이면서 평년값보다 3℃ 이상 낮을 것으로 예상될 때 ② 아침 최저기온 -12℃ 이하가 2일 이상 지속될 것으로 예상될 때",
+      "note": "①의 '평년값보다 3℃ 이상 낮을 것' 조건은 평년값 자료가 없어 반영하지 못합니다. 그만큼 가능성이 높게 나올 수 있습니다.",
+      "criteria": [
+        {"all": [
+          {"indicator": "morning_drop", "op": "<=", "value": -10},
+          {"indicator": "morning_min", "op": "<=", "value": 3, "baseline": 13}
+        ]},
+        {"indicator": "morning_min", "op": "<=", "value": -12, "consecutive_days": 2}
+      ]
+    },
+    {
+      "id": "cold_wave_warning", "type": "cold_wave", "level": "warning", "name": "한파경보",
+      "months": [10, 11, 12, 1, 2, 3, 4],
+      "official_text": "10월~4월 중 ① 아침 최저기온이 전날보다 15℃ 이상 하강하여 3℃ 이하이면서 평년값보다 3℃ 이상 낮을 것으로 예상될 때 ② 아침 최저기온 -15℃ 이하가 2일 이상 지속될 것으로 예상될 때",
+      "note": "①의 '평년값보다 3℃ 이상 낮을 것' 조건은 반영하지 못합니다.",
+      "criteria": [
+        {"all": [
+          {"indicator": "morning_drop", "op": "<=", "value": -15},
+          {"indicator": "morning_min", "op": "<=", "value": 3, "baseline": 13}
+        ]},
+        {"indicator": "morning_min", "op": "<=", "value": -15, "baseline": -3, "consecutive_days": 2}
+      ]
+    },
+    {
+      "id": "heat_wave_advisory", "type": "heat_wave", "level": "advisory", "name": "폭염주의보",
+      "official_text": "일 최고 체감온도 33℃ 이상이 2일 이상 지속될 것으로 예상될 때",
+      "criteria": [
+        {"indicator": "apparent_max", "op": ">=", "value": 33, "baseline": 25, "consecutive_days": 2}
+      ]
+    },
+    {
+      "id": "heat_wave_warning", "type": "heat_wave", "level": "warning", "name": "폭염경보",
+      "official_text": "일 최고 체감온도 35℃ 이상이 2일 이상 지속될 것으로 예상될 때",
+      "criteria": [
+        {"indicator": "apparent_max", "op": ">=", "value": 35, "baseline": 27, "consecutive_days": 2}
+      ]
+    },
+    {
+      "id": "heat_wave_severe", "type": "heat_wave", "level": "severe", "name": "폭염중대경보",
+      "official_text": "일 최고 체감온도 35℃ 이상이 2일 이상 관측된 지역에서 ① 일 최고 체감온도 38℃ 이상이 1일 이상 지속될 것으로 예상될 때 ② 일 최고기온 39℃ 이상이 1일 이상 지속될 것으로 예상될 때 (2026년 신설)",
+      "note": "선행 조건(체감온도 35℃ 이상이 2일 이상 '관측')은 관측 자료가 없어 반영하지 못합니다.",
+      "criteria": [
+        {"indicator": "apparent_max", "op": ">=", "value": 38, "baseline": 30},
+        {"indicator": "temp_max", "op": ">=", "value": 39, "baseline": 31}
+      ]
+    },
+    {
+      "id": "tropical_night_advisory", "type": "tropical_night", "level": "advisory", "name": "열대야주의보",
+      "official_text": "일 최고 체감온도 33℃ 이상이 2일 이상 지속될 것으로 예상되는 경우로서 해당 기간 밤 최저기온이 지역별 발효기준 값 이상일 것으로 예상될 때 (2026년 신설. 지역별 기준: 25℃, 특별·광역시와 인구 50만 이상 도시·해안·도서 26℃, 제주 27℃)",
+      "note": "지역별 기준값은 regions.json 의 params.tropical_night_min 에서 읽습니다.",
+      "criteria": [
+        {"all": [
+          {"indicator": "apparent_max", "op": ">=", "value": 33, "baseline": 25, "consecutive_days": 2},
+          {"indicator": "night_min", "op": ">=", "value": 25, "baseline": 18, "region_param": "tropical_night_min"}
+        ]}
+      ]
+    }
+  ]
+}

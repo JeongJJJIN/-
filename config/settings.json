@@ -1,0 +1,54 @@
+{
+  "_doc": [
+    "계산·수집 파라미터. 특보 기준값은 thresholds.json, 지역은 regions.json 에 있습니다.",
+    "horizon_hours: 가능성을 계산하는 예측 범위(시간).",
+    "fetch.past_hours: 누적·전일 대비 계산에 쓰려고 함께 받는 과거 시간. fetch.forecast_hours: 받는 예측 시간(2일 연속 기준 판단을 위해 horizon 보다 길게).",
+    "models: 비교할 예측 자료. source 가 open_meteo 인 항목의 id 는 Open-Meteo 의 models 파라미터 값 그대로입니다 (https://open-meteo.com/en/docs).",
+    "  ※ Open-Meteo 의 KMA 모델(kma_seamless 등)은 2026-03-31 부로 갱신이 중단되어 넣지 않았습니다. 한반도를 5km 로 덮는 JMA MSM 을 대신 사용합니다.",
+    "scoring: 가능성(%) 계산식(teukbo/scoring.py 의 compute_probability)의 가중치. 세 가중치의 합은 1.",
+    "grades: 가능성(%)이 caution_min 이상이면 '주의', high_min 이상이면 '높음'."
+  ],
+  "horizon_hours": 48,
+  "fetch": {
+    "past_hours": 36,
+    "forecast_hours": 72
+  },
+  "models": [
+    {"id": "kma_dfs", "name": "기상청 단기예보", "short": "단기예보", "source": "kma_forecast"},
+    {"id": "ecmwf_ifs025", "name": "유럽중기예보센터 ECMWF IFS", "short": "ECMWF", "source": "open_meteo"},
+    {"id": "ncep_gfs_seamless", "name": "미국 해양대기청 NOAA GFS", "short": "GFS", "source": "open_meteo"},
+    {"id": "dwd_icon_seamless", "name": "독일기상청 DWD ICON", "short": "ICON", "source": "open_meteo"},
+    {"id": "jma_seamless", "name": "일본기상청 JMA MSM/GSM", "short": "JMA", "source": "open_meteo"}
+  ],
+  "scoring": {
+    "weight_exceed_ratio": 0.5,
+    "weight_max_reach": 0.2,
+    "weight_mean_reach": 0.3,
+    "reach_floor": 0.5
+  },
+  "grades": {
+    "caution_min": 30,
+    "high_min": 60
+  },
+  "accuracy": {
+    "lead_hours": [12, 24],
+    "lead_tolerance_hours": 4,
+    "window_days": 365,
+    "recent_events": 20
+  },
+  "http": {
+    "timeout_seconds": 20,
+    "retries": 3,
+    "backoff_seconds": 3
+  },
+  "kma_forecast": {
+    "_doc": "기상청 단기예보의 범주 문자열을 수치로 바꿀 때 쓰는 대푯값(mm, cm)과 발표 후 조회 대기 시간(분)",
+    "pcp_under_1mm": 0.5,
+    "pcp_30_to_50mm": 40.0,
+    "pcp_over_50mm": 50.0,
+    "sno_under_0_5cm": 0.3,
+    "sno_over_5cm": 5.0,
+    "available_after_minutes": 15
+  },
+  "stale_after_hours": 7
+}
