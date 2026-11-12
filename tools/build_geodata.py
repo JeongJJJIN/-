@@ -268,8 +268,12 @@ def build_rail(path: Path) -> list[dict]:
 # ---------------------------------------------------------------- 역
 
 
-def read_codes(path: Path) -> dict[str, str]:
-    """역명 → 역코드 (공공데이터포털 한국철도공사 역코드 CSV)."""
+# 운행 기록에 쓰이는 역 이름 가운데 역코드표·지도 이름과 달라 따로 이어 줘야 하는 것 (운행 기록의 이름 → 역코드표의 이름)
+RUN_NAME_ALIASES = {"판교(경기)": "신판교"}
+
+
+def read_codes(path: Path) -> list[tuple[str, str, str]]:
+    """(역코드, 역명, 역약어명) 목록 (공공데이터포털 한국철도공사 역코드 CSV). 한 코드에 이름이 여럿이거나 한 이름에 코드가 여럿일 수 있다."""
     raw = path.read_bytes()
     for enc in ("utf-8-sig", "cp949"):
         try:
@@ -277,23 +281,47 @@ def read_codes(path: Path) -> dict[str, str]:
             break
         except UnicodeDecodeError:
             continue
-    codes: dict[str, str] = {}
+    rows: list[tuple[str, str, str]] = []
     for line in text.splitlines()[1:]:
         parts = [p.strip() for p in line.split(",")]
         if len(parts) >= 2 and parts[0] and parts[1]:
-            codes.setdefault(parts[1], parts[0])
-    return codes
+            rows.append((parts[0], parts[1], parts[2] if len(parts) > 2 else ""))
+    return rows
 
 
-def build_stations(path: Path, codes: dict[str, str], locator: ZoneLocator) -> list[dict]:
-    """한국철도공사 여객(간선) 역. 좌표는 OSM, 코드는 공식 역코드표에서 이름으로 연결한다."""
-    elements = json.loads(path.read_text(encoding="utf-8"))["elements"]
-    stations: dict[str, dict] = {}
-    unmatched: list[str] = []
-    for e in elements:
+def build_stations(path: Path, code_rows: list[tuple[str, str, str]], locator: ZoneLocator) -> list[dict]:
+    """한국철도공사 여객(간선) 역. 좌표는 OSM, 코드는 공식 역코드표에서 이름으로 연결한다.
+
+    같은 이름의 역이 둘 이상이거나(판교: 서천/성남) 한 이름에 코드가 둘인 경우(울산: 옛 울산역/KTX 울산역)가 있어,
+    후보 코드가 적은(확실한) 역부터 코드를 차지하게 한다. OSM 의 railway:ref(역 약칭)도 실마리로 쓴다.
+    """
+    import re
+
+    by_name: dict[str, list[str]] = {}
+    names_of: dict[str, list[str]] = {}
+    for code, name, abbr in code_rows:
+        names_of.setdefault(code, []).append(name)
+        for key in (name, abbr):
+            if key and code not in by_name.setdefault(key, []):
+                by_name[key].append(code)
+
+    def codes_for(names: list[str]) -> list[str]:
+        out: list[str] = []
+        for n in names:
+            for code in by_name.get(n, []):
+                if code not in out:
+                    out.append(code)
+        return out
+
+    cands: list[dict] = []
+    for e in json.loads(path.read_text(encoding="utf-8"))["elements"]:
         tags = e.get("tags", {})
         name = tags.get("name")
-        if not name or tags.get("operator") != "한국철도공사":
+        operator = tags.get("operator")
+        if not name or (operator and operator != "한국철도공사"):
+            continue
+        weak = not operator  # 운영자 표시가 없는 간이역 등 — 역코드표의 이름과 정확히 같을 때만 쓴다
+        if weak and not (tags.get("railway") == "halt" or tags.get("train") == "yes"):
             continue
         kinds = tags.get("station", "")
         if kinds and "train" not in kinds:
@@ -303,16 +331,44 @@ def build_stations(path: Path, codes: dict[str, str], locator: ZoneLocator) -> l
         if lon is None or lat is None:
             continue
         base = name[:-1] if name.endswith("역") and len(name) > 2 else name
-        candidates = [base, "S" + base]  # 운행 기록에서 SRT 정차역은 'S수서' 처럼 적힌다
-        found = [(n, codes[n]) for n in candidates if n in codes]
-        zone, _exact = locator.find(lon, lat)
-        if not found:
+        plain = re.sub(r"[()\s]", "", base)  # 김천(구미) → 김천구미
+        short = re.sub(r"\(.*?\)", "", base).strip()  # 진부(오대산) → 진부
+        exact = [n for n in dict.fromkeys([tags.get("railway:ref"), base, "S" + base, plain]) if n]  # SRT 정차역은 'S수서' 처럼 적힌다
+        cands.append({"base": base, "lon": round(lon, 4), "lat": round(lat, 4), "weak": weak, "exact": codes_for(exact),
+                      "loose": codes_for([short]) if short and short != base else [], "got": []})
+
+    stations: dict[str, dict] = {}
+
+    def claim(cand: dict, codes: list[str]) -> None:
+        zone, _exact = locator.find(cand["lon"], cand["lat"])
+        for code in codes:
+            if code in stations:
+                continue
+            names = names_of[code]
+            # 표시 이름: 역코드표에 지도 이름(또는 SRT 표기)이 있으면 그것, 없으면 지도 이름
+            shown = next((n for n in (cand["base"], "S" + cand["base"]) if n in names), cand["base"])
+            alt = sorted({n for n in names if n != shown} | {run for run, ref in RUN_NAME_ALIASES.items() if ref in names})
+            stations[code] = {"code": code, "name": shown, "lon": cand["lon"], "lat": cand["lat"], "zone": zone, **({"alt": alt} if alt else {})}
+            cand["got"].append(code)
+
+    strong = [c for c in cands if not c["weak"]]
+    for cand in sorted(strong, key=lambda c: len(c["exact"]) or 99):  # 1) 이름이 정확히 맞는 역, 확실한 것부터
+        claim(cand, cand["exact"])
+    for cand in strong:  # 2) 괄호 안 별칭을 뗀 이름으로 (다른 역이 차지하지 않은 코드만)
+        if not cand["got"]:
+            claim(cand, cand["loose"])
+    for cand in cands:  # 3) 운영자 표시가 없는 역
+        if cand["weak"]:
+            claim(cand, cand["exact"])
+    unmatched: list[str] = []
+    for cand in strong:
+        if not cand["got"]:
+            if any(st["name"] in (cand["base"], "S" + cand["base"]) and abs(st["lon"] - cand["lon"]) < 0.01 and abs(st["lat"] - cand["lat"]) < 0.01 for st in stations.values()):
+                continue  # 같은 역이 지도에 두 번 그려져 있는 것(이미 실었다)
             # 역코드표(2024-09)보다 나중에 생긴 역: 코드 없이 이름으로만 싣는다(운행 기록의 역명으로 연결)
-            unmatched.append(name)
-            stations.setdefault("name:" + base, {"code": None, "name": base, "lon": round(lon, 4), "lat": round(lat, 4), "zone": zone})
-            continue
-        for code_name, code in found:
-            stations.setdefault(code, {"code": code, "name": code_name, "lon": round(lon, 4), "lat": round(lat, 4), "zone": zone})
+            unmatched.append(cand["base"])
+            zone, _exact = locator.find(cand["lon"], cand["lat"])
+            stations.setdefault("name:" + cand["base"], {"code": None, "name": cand["base"], "lon": cand["lon"], "lat": cand["lat"], "zone": zone})
     if unmatched:
         print(f"  ※ 역코드표에 없어 이름으로만 실은 역 {len(unmatched)}곳: {', '.join(sorted(set(unmatched)))}")
     return sorted(stations.values(), key=lambda s: (s["code"] or "~", s["name"]))

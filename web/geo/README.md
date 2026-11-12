@@ -7,7 +7,7 @@
 |---|---|---|
 | `zones.json` | 육상 특보구역 235곳의 경계 `{코드: {n: 이름, c: [경도, 위도], p: [[경도, 위도, …], …]}}` | 기상청 날씨누리 특보구역 경계 |
 | `rail.json` | 철도 노선 `[{name, fast(고속선 여부), paths: [[경도, 위도, …], …]}]` | OpenStreetMap |
-| `stations.json` | 역 `[{code(코레일 역코드, 없으면 null), name, lon, lat, zone(특보구역 코드)}]` | OpenStreetMap + 한국철도공사 역코드 |
+| `stations.json` | 역 `[{code(코레일 역코드, 없으면 null), name, lon, lat, zone(특보구역 코드), alt(역코드표의 다른 이름, 있을 때만)}]` | OpenStreetMap + 한국철도공사 역코드 |
 
 `stations.json` 은 수집부(`teukbo/rail_run.py`)도 읽습니다 — 열차가 정차한 역이 어느 특보구역인지 찾는 데 씁니다.
 

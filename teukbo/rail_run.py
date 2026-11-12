@@ -46,15 +46,21 @@ def day_path(data_dir: Path, ymd: str) -> Path:
 
 
 def load_station_zones(path: Path = STATIONS_FILE) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """역 → 특보구역. (역코드 → [구역], 역 이름 → [구역])"""
-    by_code: dict[str, list[str]] = {}
+    """역 → 특보구역. (역코드 → [구역], 역 이름 → [구역])
+
+    이름 쪽에는 역코드표의 다른 이름(alt: 옛 이름·약칭)과, 괄호·빈칸을 뺀 표기도 넣는다.
+    같은 이름이 겹치면 대표 이름 > 다른 이름 > 괄호를 뺀 표기 순으로 먼저 온 것이 이긴다.
+    """
+    stations = [s for s in storage.read_json(path, []) or [] if s.get("zone")]
+    by_code = {str(s["code"]): [s["zone"]] for s in stations if s.get("code")}
     by_name: dict[str, list[str]] = {}
-    for s in storage.read_json(path, []) or []:
-        if not s.get("zone"):
-            continue
-        if s.get("code"):
-            by_code[str(s["code"])] = [s["zone"]]
+    for s in stations:
         by_name.setdefault(str(s["name"]), [s["zone"]])
+    for s in stations:
+        for alt in s.get("alt") or []:
+            by_name.setdefault(str(alt), [s["zone"]])
+    for name, zones in list(by_name.items()):
+        by_name.setdefault(rail.plain_name(name), zones)
     return by_code, by_name
 
 

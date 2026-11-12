@@ -393,3 +393,26 @@ class RailRunTest(unittest.TestCase):
         self.assertEqual(by_code["3900714"], ["L1050900"])  # 벌교역 → 보성
         self.assertEqual(by_name["강진"], ["L1051400"])  # 역코드표에 없는 새 역은 이름으로
         self.assertGreater(len(by_code), 400)
+        # 이름이 겹치거나 표기가 다른 역 (실제 운행 기록에서 확인한 이름들)
+        self.assertEqual(by_code["3900896"], ["L1082900"])  # KTX 울산역(울산서부) — 옛 울산역(지금의 태화강)과 다른 코드
+        self.assertEqual(by_name["울산"], ["L1082900"])
+        self.assertEqual(by_name["태화강"], ["L1082800"])
+        self.assertEqual(by_name["김천구미"], by_name["김천(구미)"])
+        self.assertNotEqual(by_name["김천구미"], None)
+        self.assertEqual(by_name["진부"], ["L1022420"])
+        self.assertEqual(by_name["신창"], ["L1030400"])
+        self.assertEqual(by_name["지탄"], ["L1040600"])
+        self.assertEqual(by_code["3900343"], ["L1031500"])  # 장항선 판교(서천)
+        self.assertEqual(by_name["판교(경기)"], ["L1012000"])  # 경강선 판교(성남)
+
+    def test_station_name_variants_are_matched(self):
+        from teukbo import rail
+
+        self.assertEqual(rail.plain_name("김천(구미)"), "김천구미")
+        self.assertEqual(rail.plain_name("신창 (순천향대)"), "신창순천향대")
+        run = rail.TrainRun(ymd="20261111", trn_no="00101", line="경부선", direction="D", origin="서울", dest="부산")
+        run.stops = [rail.Stop("X1", "김천 구미", rail.STOP_ORIGIN, None, kst(2026, 11, 11, 7, 0))]
+        timeline = rail.WarningTimeline([rail.Interval("L1072610", "강풍", "주의보", kst(2026, 11, 11, 6, 0), None)])
+        unmatched = rail.attach_warnings([run], timeline, {}, {"주의보": 1, "경보": 2}, {"김천구미": ["L1072610"]})
+        self.assertEqual(run.warnings, {"강풍": "주의보"})
+        self.assertFalse(unmatched)

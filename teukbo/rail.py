@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -231,6 +232,11 @@ class WarningTimeline:
         return [i for i in self._by_code.get(code, []) if i.start <= when and (i.end is None or when < i.end)]
 
 
+def plain_name(name: str) -> str:
+    """역 이름에서 괄호와 빈칸을 뺀다: '김천(구미)' → '김천구미'. 표기가 조금 다른 이름을 잇는 데 쓴다."""
+    return re.sub(r"[()\s]", "", name or "")
+
+
 def attach_warnings(
     runs: Iterable[TrainRun],
     timeline: WarningTimeline,
@@ -248,7 +254,7 @@ def attach_warnings(
         found: dict[str, str] = {}
         for stop in run.stops:
             when = stop.time
-            zones = station_zones.get(stop.code) or by_name.get(stop.name)
+            zones = station_zones.get(stop.code) or by_name.get(stop.name) or by_name.get(plain_name(stop.name))
             if not zones:
                 unmatched[stop.name] += 1
                 continue
