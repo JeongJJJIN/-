@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="기상특보 가능성">
+  <rect width="512" height="512" rx="112" fill="#12304d"/>
+  <g fill="none" stroke-linecap="round" stroke-width="44">
+    <path d="M116 318a140 140 0 0 1 41-99" stroke="#c3c2b7"/>
+    <path d="M190 194a140 140 0 0 1 132 0" stroke="#fab219"/>
+    <path d="M355 219a140 140 0 0 1 41 99" stroke="#ec835a"/>
+  </g>
+  <path d="M256 318 330 226" stroke="#fcfcfb" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="256" cy="318" r="30" fill="#fcfcfb"/>
+  <rect x="136" y="376" width="240" height="20" rx="10" fill="#fcfcfb" opacity=".55"/>
+</svg>
