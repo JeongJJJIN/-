@@ -39,7 +39,6 @@ from .http import FetchError, get_json
 from .indicators import ModelSeries
 from .sources.open_meteo import HOURLY_VARS
 from .timeutil import KST, iso, now_kst, parse_iso
-from .zones import load_zone_table
 
 log = logging.getLogger("teukbo.backtest")
 
@@ -167,27 +166,22 @@ def stitch(leads: Mapping[int, ModelSeries], issue: datetime, past_hours: int, h
 def region_intervals(cfg: Config, intervals: Sequence[rail.Interval]) -> dict[str, list[tuple[str, str, datetime, datetime | None, str]]]:
     """지역 id → [(특보 종류 id, 단계 id, 시작, 끝, 구역 코드)]. 계산 대상이 아닌 종류(풍랑·건조 등)는 뺀다.
 
-    특보는 말단 구역·시군·도 어느 단위로도 내려지므로, 발표된 구역의 말단 구역들 가운데 그 지역의 구역이 있으면 그 지역의 특보로 본다.
+    특보는 말단 구역·시군·도 어느 단위로도 내려진다. 지역은 자기 구역과 그 위의 시·군(zone_codes), 도·광역시(group_codes)의
+    코드를 갖고 있으므로, 발표된 구역 코드가 그 가운데 있으면 그 지역의 특보다(실시간 수집의 연결 규칙과 같다).
     """
     th = cfg.thresholds
     type_by_name = {info["name"]: type_id for type_id, info in th.types.items()}
     level_by_name = {info["name"]: level_id for level_id, info in th.levels.items()}
-    table = load_zone_table()
     owners: dict[str, list[str]] = {}
     for region in cfg.regions:
-        for code in region.zone_codes:
+        for code in {*region.zone_codes, *region.group_codes}:
             owners.setdefault(code, []).append(region.id)
-            for leaf in table.leaves(code):
-                owners.setdefault(leaf, []).append(region.id)
     out: dict[str, list[tuple[str, str, datetime, datetime | None, str]]] = {r.id: [] for r in cfg.regions}
     for interval in intervals:
         type_id, level_id = type_by_name.get(interval.type_name), level_by_name.get(interval.level_name)
-        if type_id is None or level_id is None or not interval.code.startswith("L"):
+        if type_id is None or level_id is None:
             continue
-        hit = set(owners.get(interval.code, []))
-        for leaf in table.leaves(interval.code):
-            hit.update(owners.get(leaf, []))
-        for rid in hit:
+        for rid in owners.get(interval.code, []):
             out[rid].append((type_id, level_id, interval.start, interval.end, interval.code))
     return out
 

@@ -725,7 +725,9 @@ class RailPageTest(unittest.TestCase):
         self.assertNotIn('<nav', html)
         for other in ("full.html", "rail.html", "analysis.html"):
             self.assertNotIn(other, html, other)
-        self.assertEqual(re.findall(r"<h2", html), [])  # 구역 제목을 늘어놓지 않는다
+        self.assertEqual(re.findall(r'<h2 id="([\w-]+)"', html), ["h-proof"])  # 구역 제목은 맨 아래 '과거 검증' 하나뿐
+        self.assertLess(body.index('id="map"'), body.index('id="proof"'))  # 과거 검증은 지도 아래에
+        self.assertIn("data/backtest.json", script)
         body = html[html.index("<main"):html.index("</main>")]
         self.assertLess(body.index('id="q"'), body.index('id="result"'))  # 찾기 → 가능성 → 지도
         self.assertLess(body.index('id="result"'), body.index('id="map"'))
