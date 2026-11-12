@@ -290,50 +290,122 @@ def delay_stats(delays: Sequence[int], late_minutes: Sequence[int] = (5, 10, 20)
     return out
 
 
-MIN_SAMPLE = 30  # 이보다 적으면 '자료 부족'으로 본다
-MIN_EFFECT_MINUTES = 1.0  # 이보다 작은 차이는 통계적으로 뚜렷해도 '차이 없음'으로 본다(운영상 의미가 없다)
+MIN_SAMPLE = 30  # 특보 구간을 지난 열차가 이보다 적으면 판정하지 않는다
+MIN_EFFECT_MINUTES = 1.0  # 이보다 작은 차이는 운영상 의미가 없다고 본다
+MIN_DAYS = 8  # 특보일(특보 구간을 지난 열차가 있던 날)이 이보다 적으면 판정하지 않는다 — 날 수가 적으면 그날의 사정이 그대로 드러난다
+MAX_DAY_SHARE = 0.4  # 하루가 특보 구간 통과 열차의 이 비율을 넘어도 판정하지 않는다
+MIN_BASE_RUNS = 3  # 같은 열차번호의 '특보 없던 운행'이 이만큼은 있어야 그 열차의 평소 값을 낸다
+# 양쪽 95%에 해당하는 t 값(자유도 1~30). 특보일 수가 적을수록 오차 범위를 넓게 잡는다.
+_T95 = (12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.160, 2.145, 2.131,
+        2.120, 2.110, 2.101, 2.093, 2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042)
 
 
-def adjusted_difference(by_line: Mapping[str, Mapping[str, Sequence[int]]]) -> dict[str, Any]:
-    """같은 노선끼리 비교한 지연 차이: 특보 구간을 지난 열차 − 지나지 않은 열차 (분).
+def _round_half_up(value: float, digits: int) -> float:
+    """화면(자바스크립트)과 똑같이 반올림한다 — 파이썬의 round 는 5에서 짝수 쪽으로 가서 끝자리가 달라질 수 있다. -0.0 은 0.0 으로."""
+    scale = 10 ** digits
+    return math.floor(value * scale + 0.5) / scale + 0.0
 
-    노선마다 평소 지연이 다르므로(경부선은 길고 붐빈다), 전체 평균끼리 비교하면 노선 구성의 차이가 섞인다.
-    그래서 노선별로 차이를 구한 뒤 '특보 구간을 지난 열차 수'로 가중 평균한다. 두 쪽 열차가 다 있는 노선만 쓴다.
-    95% 구간은 정규 근사(차이 ± 1.96 × 표준오차). 지연은 조착을 0분으로 본 값이다.
 
-    판정 verdict: "insufficient"(자료 부족) / "later"(더 늦었음) / "earlier"(덜 늦었음) / "no_difference"(뚜렷한 차이 없음)
-    — 같은 때 있었다는 것일 뿐 원인을 뜻하지 않는다(사고·고장·작업, 요일·시간대의 차이가 섞여 있다).
+def t95(df: int) -> float:
+    return _T95[df - 1] if 1 <= df <= len(_T95) else 1.96 + 2.4 / df
+
+
+def warning_type(name: str) -> str:
+    """'호우주의보' → '호우'"""
+    return re.sub(r"(중대경보|주의보|경보)$", "", name)
+
+
+def weekday_class(ymd: str) -> str:
+    """요일대: 월~목 / 금 / 토 / 일 — 열차 지연은 요일에 따라 다르다(주말·금요일이 더 늦다)."""
+    day = datetime.strptime(ymd, "%Y-%m-%d").weekday()
+    return "weekday" if day <= 3 else ("fri", "sat", "sun")[day - 4]
+
+
+def train_baselines(days: Sequence[Mapping[str, Any]]) -> Any:
+    """열차번호별 '평소 종착 지연' = 그 열차가 특보 구간을 지나지 않은 운행들의 평균(조착은 0분).
+
+    같은 번호의 열차는 날마다 같은 구간을 같은 시각에 달리므로, 노선·시간대·열차 종류가 저절로 맞춰진다.
+    요일대(월~목/금/토/일)가 같은 운행이 MIN_BASE_RUNS 번 이상이면 그것으로, 모자라면 요일을 가리지 않고 구한다.
+    그래도 모자라면 None(그 열차는 평소 대비 비교에 쓰지 않는다). 반환: (열차번호, 날짜) → 평소 값 또는 None
+
+    중앙값이 아니라 평균을 쓰는 까닭: 지연은 한쪽으로 긴 꼬리가 있어 평균이 중앙값보다 크다. 중앙값을 평소로 잡으면
+    특보가 없어도 '평소보다 늦다'고 나온다 — 실제 기록에서 특보 없던 날을 특보일로 꾸며 시험했을 때 31%가 잘못
+    '더 늦음'으로 판정됐고, 평균으로 바꾸자 0.3%였다(tests/test_rail.py 의 가짜 특보 시험이 이를 지킨다).
     """
-    used = 0
-    total = 0
-    weighted = 0.0
-    variance_terms: list[tuple[int, float]] = []
-    for groups in by_line.values():
-        warn = [max(0, d) for d in groups.get("warn", [])]
-        clear = [max(0, d) for d in groups.get("clear", [])]
-        if not warn or len(clear) < 2:
-            continue
-        mean_w, mean_c = sum(warn) / len(warn), sum(clear) / len(clear)
-        var_c = sum((v - mean_c) ** 2 for v in clear) / (len(clear) - 1)
-        var_w = sum((v - mean_w) ** 2 for v in warn) / (len(warn) - 1) if len(warn) > 1 else var_c  # 한 편뿐이면 그 노선의 평소 흩어짐으로 대신한다
-        used += 1
-        total += len(warn)
-        weighted += len(warn) * (mean_w - mean_c)
-        variance_terms.append((len(warn), var_w / len(warn) + var_c / len(clear)))
-    if total == 0:
-        return {"n": 0, "lines": 0, "verdict": "insufficient"}
-    diff = weighted / total
-    se = math.sqrt(sum((n / total) ** 2 * v for n, v in variance_terms))
-    low, high = diff - 1.96 * se, diff + 1.96 * se
-    if total < MIN_SAMPLE:
-        verdict = "insufficient"
-    elif low > 0 and diff >= MIN_EFFECT_MINUTES:
-        verdict = "later"
-    elif high < 0 and diff <= -MIN_EFFECT_MINUTES:
-        verdict = "earlier"
-    else:
-        verdict = "no_difference"
-    return {"n": total, "lines": used, "diff": round(diff, 1), "low": round(low, 1), "high": round(high, 1), "verdict": verdict}
+    by_class: dict[tuple[str, str], list[int]] = {}
+    by_train: dict[str, list[int]] = {}
+    for day in days:
+        idx = {name: i for i, name in enumerate(day.get("fields", []))}
+        group = weekday_class(day["date"])
+        for row in day.get("trains", []):
+            delay = row[idx["arr_delay"]]
+            if delay is None or row[idx["warnings"]]:
+                continue
+            by_class.setdefault((row[idx["trn_no"]], group), []).append(max(0, int(delay)))
+            by_train.setdefault(row[idx["trn_no"]], []).append(max(0, int(delay)))
+
+    def baseline(trn_no: str, ymd: str) -> float | None:
+        for values in (by_class.get((trn_no, weekday_class(ymd))), by_train.get(trn_no)):
+            if values and len(values) >= MIN_BASE_RUNS:
+                return sum(values) / len(values)
+        return None
+
+    return baseline
+
+
+def matched_difference(per_day: Iterable[Sequence[float]]) -> dict[str, Any]:
+    """특보 구간을 지난 열차가 '같은 열차의 평소'보다 얼마나 늦었나(분) — 날짜를 단위로 본 평균과 오차 범위.
+
+    per_day: 날마다 (평소 값을 낼 수 있었던 특보 구간 통과 열차 수, 그 열차들의 (지연 − 평소) 합)
+    같은 날의 열차는 함께 늦어지므로(사고·혼잡이 여러 열차에 번진다) 열차 한 편 한 편을 따로 센 것처럼 계산하면
+    오차 범위가 실제보다 몇 배 좁게 나온다. 그래서 날짜별 합으로 흩어짐을 재고, 특보일 수에 맞는 t 값을 쓴다.
+
+    판정 verdict — 화면에 보이는(반올림한) 값으로 정한다:
+      "hold"    판단 보류: 열차 MIN_SAMPLE 편 미만(reason few_trains) · 특보일 MIN_DAYS 일 미만(few_days)
+                · 하루에 MAX_DAY_SHARE 넘게 몰림(one_day) · 오차 범위가 넓어 어느 쪽이라 하기 어려움(wide)
+      "within"  차이 1분 미만: 오차 범위 전체가 ±MIN_EFFECT_MINUTES 안
+      "later"   더 늦은 경향: 오차 범위가 0보다 위   "earlier" 덜 늦은 경향: 오차 범위가 0보다 아래
+    같은 때 있었다는 것일 뿐 원인을 뜻하지 않는다.
+    """
+    pairs = [(int(n), float(total)) for n, total in per_day if n > 0]
+    trains, days = sum(n for n, _ in pairs), len(pairs)
+    if trains == 0:
+        return {"n": 0, "days": 0, "verdict": "hold", "reason": "few_trains"}
+    mean = sum(total for _, total in pairs) / trains
+    top = max(n for n, _ in pairs) / trains
+    out: dict[str, Any] = {"n": trains, "days": days, "top_share": _round_half_up(top, 2), "diff": _round_half_up(mean, 1)}
+    if days >= 2:
+        se = math.sqrt(days / (days - 1) * sum((total - mean * n) ** 2 for n, total in pairs)) / trains
+        half = t95(days - 1) * se
+        out["low"], out["high"] = _round_half_up(mean - half, 1), _round_half_up(mean + half, 1)
+    if trains < MIN_SAMPLE:
+        return {**out, "verdict": "hold", "reason": "few_trains"}
+    if days < MIN_DAYS:
+        return {**out, "verdict": "hold", "reason": "few_days"}
+    if top > MAX_DAY_SHARE:
+        return {**out, "verdict": "hold", "reason": "one_day"}
+    low, high = out["low"], out["high"]
+    if low >= -MIN_EFFECT_MINUTES and high <= MIN_EFFECT_MINUTES:
+        return {**out, "verdict": "within"}
+    if low > 0:
+        return {**out, "verdict": "later"}
+    if high < 0:
+        return {**out, "verdict": "earlier"}
+    return {**out, "verdict": "hold", "reason": "wide"}
+
+
+def cube_matched(cube: Mapping[str, Any], type_name: str | None = None) -> dict[str, Any]:
+    """묶음 집계에서 '평소 대비' 판정을 낸다(전체 기간·모든 노선). type_name 을 주면 그 종류의 특보 구간을 지난 열차만."""
+    names = cube.get("warnings", [])
+    per_day = []
+    for day in cube.get("days", []):
+        count, total = 0, 0.0
+        for cell in day["cells"]:
+            if cell[2] and (type_name is None or any(warning_type(names[i]) == type_name for i in cell[2])):
+                count += cell[14]
+                total += cell[15]
+        per_day.append((count, total))
+    return matched_difference(per_day)
 
 
 def summarize_day(ymd: str, runs: Sequence[TrainRun], classes: Sequence[Mapping[str, Any]], now: datetime) -> dict[str, Any]:
@@ -397,7 +469,6 @@ def aggregate(days: Sequence[Mapping[str, Any]], recent_days: int = 14) -> dict[
     by_warning: dict[str, list[int]] = {}  # 호우주의보, 호우경보 …
     by_type: dict[str, list[int]] = {}  # 호우, 강풍 …
     by_line_warn: dict[str, dict[str, list[int]]] = {}  # 노선 → {"warn": […], "clear": […]}
-    type_line_warn: dict[str, dict[str, list[int]]] = {}  # 종류 → 노선 → 그 종류의 특보 구간을 지난 열차의 지연
     daily: list[dict[str, Any]] = []
     for day in days:
         idx = {name: i for i, name in enumerate(day.get("fields", []))}
@@ -415,13 +486,13 @@ def aggregate(days: Sequence[Mapping[str, Any]], recent_days: int = 14) -> dict[
                 slot["warn"].append(delay)
                 for name in names:
                     by_warning.setdefault(name, []).append(delay)
-                for type_name in {n.replace("중대경보", "").replace("주의보", "").replace("경보", "") for n in names}:
+                for type_name in {warning_type(n) for n in names}:
                     by_type.setdefault(type_name, []).append(delay)
-                    type_line_warn.setdefault(type_name, {}).setdefault(line, []).append(delay)
             else:
                 slot["clear"].append(delay)
                 clear.append(delay)
         daily.append({"date": day["date"], **{k: day.get("all", {}).get(k) for k in ("n", "mean", "late10", "max")}, "warned": day_warned})
+    cube = build_cube(days)
     lines = {
         line: {"warn": delay_stats(v["warn"]), "clear": delay_stats(v["clear"])}
         for line, v in sorted(by_line_warn.items())
@@ -435,17 +506,65 @@ def aggregate(days: Sequence[Mapping[str, Any]], recent_days: int = 14) -> dict[
         "by_type": {k: delay_stats(v) for k, v in sorted(by_type.items())},
         "by_warning": {k: delay_stats(v) for k, v in sorted(by_warning.items())},
         "by_line": lines,
-        # 같은 노선끼리 비교한 차이(특보 구간을 지난 열차 − 지나지 않은 열차)
-        "adjusted": {
-            "all": adjusted_difference(by_line_warn),
-            "by_type": {
-                type_name: adjusted_difference({line: {"warn": delays, "clear": by_line_warn[line]["clear"]} for line, delays in per_line.items()})
-                for type_name, per_line in sorted(type_line_warn.items())
-            },
-        },
+        # 특보 구간을 지난 열차가 같은 열차의 평소보다 얼마나 늦었나(날짜 단위 오차 범위·판정) — matched_difference 참고
+        "matched": {"all": cube_matched(cube), "by_type": {type_name: cube_matched(cube, type_name) for type_name in sorted(by_type)}},
         "daily": daily[-recent_days:],
         "latest": days[-1]["date"] if days else None,
     }
+
+
+CUBE_BINS = (0, 1, 5, 10, 20, 30, 60)  # 지연 구간의 아래 값(분): 0 / 1~4 / 5~9 / 10~19 / 20~29 / 30~59 / 60 이상
+
+
+def build_cube(days: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """날짜 × 노선 × 열차 종류 × 지나간 특보 단위로 묶은 집계 (data/rail/cube.json) — 분석 화면이 조건을 바꿔 가며 다시 셈하는 바탕.
+
+    cells 한 줄: [노선 번호, 종류 번호, [특보 번호…], 열차 수, 지연 합(분), 지연 제곱합, 최대 지연, 구간별 열차 수 × 7,
+                  평소 값을 낼 수 있었던 열차 수, (지연 − 그 열차의 평소) 합]
+    지연은 조착을 0분으로 본 종착 지연. 지연을 계산하지 못한 열차는 넣지 않는다.
+    마지막 두 값은 특보 구간을 지난 열차에만 계산한다(train_baselines · matched_difference 참고). 그 밖의 칸은 0.
+    """
+    lines: list[str] = []
+    classes: list[str] = []
+    warnings: list[str] = []
+    baseline = train_baselines(days)
+
+    def index(table: list[str], name: str) -> int:
+        if name not in table:
+            table.append(name)
+        return table.index(name)
+
+    out_days = []
+    for day in sorted(days, key=lambda d: d["date"]):
+        idx = {name: i for i, name in enumerate(day.get("fields", []))}
+        cells: dict[tuple[int, int, tuple[int, ...]], list[float]] = {}
+        for row in day.get("trains", []):
+            delay = row[idx["arr_delay"]]
+            if delay is None:
+                continue
+            value = max(0, int(delay))
+            names = row[idx["warnings"]] or []
+            key = (index(lines, row[idx["line"]] or "미상"), index(classes, row[idx["class"]] or "기타"), tuple(sorted(index(warnings, name) for name in names)))
+            cell = cells.setdefault(key, [0, 0, 0, 0] + [0] * len(CUBE_BINS) + [0, 0.0])
+            cell[0] += 1
+            cell[1] += value
+            cell[2] += value * value
+            cell[3] = max(cell[3], value)
+            cell[4 + max(i for i, lo in enumerate(CUBE_BINS) if value >= lo)] += 1
+            usual = baseline(row[idx["trn_no"]], day["date"]) if names else None
+            if usual is not None:
+                cell[-2] += 1
+                cell[-1] += value - usual
+        counts = day.get("counts", {})
+        out_days.append({
+            "date": day["date"],
+            "final": bool(day.get("final", True)),
+            "planned": counts.get("planned", 0),
+            "recorded": counts.get("recorded", 0),
+            "no_record": counts.get("no_record", 0),
+            "cells": [[k[0], k[1], list(k[2]), *v[:-1], round(v[-1], 1)] for k, v in sorted(cells.items())],
+        })
+    return {"schema": 2, "bins": list(CUBE_BINS), "lines": lines, "classes": classes, "warnings": warnings, "days": out_days}
 
 
 def window_days(now: datetime, back: int) -> list[str]:

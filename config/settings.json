@@ -59,6 +59,26 @@
     "rail_rain": true,
     "rail_rain_carry_minutes": 30
   },
+  "local": {
+    "_doc": [
+      "내 컴퓨터를 서버로 쓸 때(teukbo.local — start.bat / start.command).",
+      "live_interval_seconds: 실시간 자료(특보·지금 날씨·6시간 예보·선로 강우)를 다시 받는 간격. poll_seconds: 화면이 다시 읽는 간격.",
+      "trigger: 공개 사이트 갱신 신호. local_keys.txt 에 GITHUB_TRIGGER_TOKEN 이 있을 때만 쓴다(GitHub 예약 실행이 늦거나 돌지 않을 때 이 컴퓨터가 시계 노릇).",
+      "  repository: 신호를 보낼 저장소(소유자/이름). live_every_minutes: 실시간 수집 신호 간격.",
+      "  collect_utc_hours·collect_minute: 수집·계산·배포 신호를 보낼 시각(UTC) — .github/workflows/collect.yml 의 예약과 같게 둔다."
+    ],
+    "live_interval_seconds": 120,
+    "poll_seconds": 60,
+    "trigger": {
+      "repository": "teukbo/teukbo.github.io",
+      "ref": "main",
+      "live_workflow": "live.yml",
+      "live_every_minutes": 5,
+      "collect_workflow": "collect.yml",
+      "collect_utc_hours": [2, 5, 8, 11, 14, 17, 20, 23],
+      "collect_minute": 25
+    }
+  },
   "kma_forecast": {
     "_doc": "기상청 단기예보의 범주 문자열을 수치로 바꿀 때 쓰는 대푯값(mm, cm)과 발표 후 조회 대기 시간(분)",
     "pcp_under_1mm": 0.5,

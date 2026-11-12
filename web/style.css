@@ -639,8 +639,8 @@ table.fit.lines-table td { white-space: normal; }
 .findings li:first-child { margin-top: 0; }
 .pill.verdict-later { background: var(--z-adv); color: var(--ink); }
 .pill.verdict-earlier { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
-.pill.verdict-no_difference { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
-.pill.verdict-insufficient { background: transparent; color: var(--ink-3); border-color: var(--axis); border-style: dashed; }
+.pill.verdict-within { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
+.pill.verdict-hold { background: transparent; color: var(--ink-2); border-color: var(--axis); border-style: dashed; }
 
 /* 선로 강우 실황 */
 .summary-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -649,6 +649,93 @@ table.fit.lines-table td { white-space: normal; }
 .rain-key { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; border: 1px solid var(--map-line); vertical-align: -1px; }
 table.fit.rain-table td, table.fit.rain-table tbody th { white-space: nowrap; }
 @media (min-width: 620px) { .summary-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* ====================================================================
+   분석: 조건 고르기, 결과 요약, 그래프, 날짜·열차 목록
+   ==================================================================== */
+.filters { display: grid; gap: 10px; }
+.filter-row { display: grid; grid-template-columns: 3em 1fr; gap: 6px 10px; align-items: center; }
+.filter-row .chips { margin: 0; }
+.filter-row.custom { grid-template-columns: 3em auto auto 1fr; font-size: 14px; }
+.filter-row.custom input { margin-left: 4px; min-height: 36px; padding: 4px 8px; border: 1px solid var(--axis); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
+.filter-row .select-wrap { max-width: 320px; }
+.filter-label { color: var(--ink-2); font-size: 14px; font-weight: 600; }
+.filter-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding-top: 10px; border-top: 1px solid var(--hair); }
+.filter-scope { margin: 0; font-size: 14px; font-weight: 700; }
+.hint.flow { margin-top: 8px; }
+.kpi-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.kpi-tiles .tile .label { font-weight: 700; color: var(--ink); }
+.kpi-tiles .tile .label small { display: block; min-height: 2.7em; color: var(--ink-2); font-size: 12.5px; font-weight: 400; }
+.kpi-tiles .tile .sub { margin: 0; }
+.kpi-tiles .tile .sub + .sub { margin-top: 2px; }
+.panel.verdict, .panel.operation { margin-top: 8px; }
+.panel-h { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
+.op-list { margin: 0; padding: 0; list-style: none; }
+.op-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 14px; padding: 12px 0; border-top: 1px solid var(--hair); }
+.op-label { grid-column: 1 / -1; }
+.op-label b { font-size: 16px; }
+.op-label small { margin-left: 8px; color: var(--ink-2); font-size: 13px; }
+.op-cell .op-k { display: block; color: var(--ink-2); font-size: 12.5px; }
+.op-cell .op-k em { display: block; color: var(--ink); font-size: 13.5px; font-style: normal; font-weight: 600; }
+.op-cell .op-k i { display: block; font-style: normal; }
+.op-cell b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.35; }
+.op-cell small { display: block; color: var(--ink-2); font-size: 13px; font-variant-numeric: tabular-nums; }
+.op-cell small.tag { display: inline-block; margin-top: 4px; color: var(--ink); }
+@media (min-width: 620px) {
+  .op-row { grid-template-columns: 12em minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  .op-label { grid-column: auto; }
+  .op-label small { display: block; margin-left: 0; }
+}
+.verdict-line { margin: 0; font-size: 15px; }
+.figure { margin: 0; }
+.chart .bar.s-main { fill: var(--series-1); }
+.chart .bar.s-base { fill: var(--g-low); }
+.chart .bar-g.pickable { cursor: pointer; }
+.chart .bar-g.picked rect { fill: var(--g-low-wash); }
+.swatch.bar-key.s-main { background: var(--series-1); }
+.swatch.bar-key.s-base { background: var(--g-low); }
+.tip-key { display: inline-block; width: 10px; height: 0; margin-right: 6px; border-top: 2px solid var(--ink-3); vertical-align: middle; }
+.tip-key.s-main { border-top-color: var(--series-1); }
+.tip-key.s-base { border-top-color: var(--g-low); }
+.rank { margin: 0; padding: 0; list-style: none; }
+.rank-cap { margin: 0 0 4px; color: var(--ink-2); font-size: 13px; }
+.rank-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name value" "track track"; gap: 6px 12px; align-items: end; padding: 12px 0; border-top: 1px solid var(--hair); }
+.rank-name { grid-area: name; min-width: 0; }
+.rank-name b { display: block; font-size: 16px; }
+.rank-name small { display: block; color: var(--ink-2); font-size: 13px; }
+.rank-value { grid-area: value; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.rank-value small { margin-left: 2px; color: var(--ink-2); font-size: 13px; font-weight: 600; }
+.rank-track { grid-area: track; height: 12px; }
+.rank-track .hbar { display: block; height: 100%; border-radius: 0 4px 4px 0; }
+.hbar.s-main { background: var(--series-1); }
+.hbar.s-base { background: var(--g-low); }
+.rank-name small.rank-caveat { font-size: 12.5px; }
+/* 가운데 선을 0으로: 오른쪽 = 평소보다 늦음, 왼쪽 = 덜 늦음 */
+.rank-track.diverge { position: relative; background: linear-gradient(var(--axis), var(--axis)) 50% 0 / 1px 100% no-repeat; }
+.rank-track.diverge .hbar { position: absolute; top: 0; }
+.hbar.pos { left: 50%; background: var(--series-1); border-radius: 0 4px 4px 0; }
+.hbar.neg { right: 50%; background: var(--g-low); border-radius: 4px 0 0 4px; }
+.rank-row.soft .hbar, .swatch.hbar-key.soft { opacity: .4; }
+.rank-row.soft .rank-value { color: var(--ink-2); }
+.swatch.hbar-key { width: 18px; height: 10px; border-radius: 2px; }
+.swatch.hbar-key.pos { background: var(--series-1); }
+.swatch.hbar-key.neg { background: var(--g-low); }
+.note.caveat { margin: 0 0 4px; padding: 8px 10px; border: 1px dashed var(--axis); border-radius: 8px; color: var(--ink); }
+@media (min-width: 620px) {
+  .rank-row { grid-template-columns: 15em minmax(0, 1fr) 4.6em; grid-template-areas: "name track value"; align-items: center; }
+  .rank-value { text-align: right; }
+}
+table.fit.days-table td, table.fit.line-table td { white-space: nowrap; }
+table.fit.days-table tbody th, table.fit.line-table tbody th { white-space: nowrap; text-align: left; }
+table.fit.days-table tbody th small.tag { display: table; margin: 4px 0 0; }
+.day-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.linklike { text-align: left; white-space: nowrap; }
+.days-table .pill { margin: 0; }
+tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
+.search-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.search { flex: 1 1 16em; min-width: 0; min-height: 40px; padding: 6px 12px; border: 1px solid var(--axis); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; font-size: 15px; }
+.chip.more { margin-top: 10px; }
+@media (min-width: 620px) { .kpi-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 /* hidden 속성은 display 를 지정한 요소에서도 늘 숨긴다 */
 [hidden] { display: none !important; }

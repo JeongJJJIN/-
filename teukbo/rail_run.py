@@ -5,6 +5,7 @@
 - data/rail/days/날짜.json   그날 열차별 종착 지연과 지나간 구간의 특보 (커밋, 누적)
 - data/rail/events/연-월.json 특보 발표·해제 이력 보관 (공식 조회 한도가 약 60일이라 받아 둔다)
 - data/rail/summary.json     누적 통계 — 웹이 읽는다
+- data/rail/cube.json        날짜 × 노선 × 열차 종류 × 특보 단위 집계 — 분석 화면이 조건을 바꿔 가며 다시 센다
 
 아직 처리하지 않은 날이 있으면 한 번에 max_days_per_run 일씩, time_budget_seconds 안에서 채운다
 (처음 며칠 동안 과거분이 차례로 쌓인다). 기상 수집·배포를 늦추지 않으려는 것이다.
@@ -154,9 +155,7 @@ def process_day(cfg: Config, key: str, ymd: str, timeline: rail.WarningTimeline,
 
 
 def build_summary(data_dir: Path, cfg: Config, now: datetime) -> dict[str, Any] | None:
-    folder = rail_dir(data_dir) / "days"
-    days = [storage.read_json(p) for p in sorted(folder.glob("*.json"))] if folder.is_dir() else []
-    days = [d for d in days if d]
+    days = load_days(data_dir)
     if not days:
         return None
     summary = rail.aggregate(days)
@@ -235,7 +234,16 @@ def run(cfg: Config, now: datetime, data_dir: Path, env: Mapping[str, str], max_
         previous = storage.read_json(path) or {}
         if {k: v for k, v in previous.items() if k != "updated_at"} != {k: v for k, v in summary.items() if k != "updated_at"}:
             storage.write_json(path, summary)
+        cube = rail.build_cube(load_days(data_dir))
+        cube_path = rail_dir(data_dir) / "cube.json"
+        if storage.read_json(cube_path) != cube:
+            storage.write_json(cube_path, cube)
     return 0
+
+
+def load_days(data_dir: Path) -> list[dict[str, Any]]:
+    folder = rail_dir(data_dir) / "days"
+    return [d for d in (storage.read_json(p) for p in sorted(folder.glob("*.json"))) if d] if folder.is_dir() else []
 
 
 def main(argv: list[str] | None = None) -> int:
