@@ -236,20 +236,31 @@ def attach_warnings(
     timeline: WarningTimeline,
     station_zones: Mapping[str, Sequence[str]],
     level_rank: Mapping[str, int],
-) -> None:
-    """열차마다, 정차한 역의 특보구역에 그 시각 발효 중이던 특보를 붙인다(종류별 최고 단계)."""
+    zones_by_name: Mapping[str, Sequence[str]] | None = None,
+) -> Counter:
+    """열차마다, 정차한 역의 특보구역에 그 시각 발효 중이던 특보를 붙인다(종류별 최고 단계).
+
+    역은 역코드로 찾고, 표에 없는 코드는 역 이름으로 찾는다. 반환: 특보구역을 찾지 못한 역 이름별 정차 횟수.
+    """
+    by_name = zones_by_name or {}
+    unmatched: Counter = Counter()
     for run in runs:
         found: dict[str, str] = {}
         for stop in run.stops:
             when = stop.time
+            zones = station_zones.get(stop.code) or by_name.get(stop.name)
+            if not zones:
+                unmatched[stop.name] += 1
+                continue
             if when is None:
                 continue
-            for code in station_zones.get(stop.code, ()):
+            for code in zones:
                 for interval in timeline.active(code, when):
                     best = found.get(interval.type_name)
                     if best is None or level_rank.get(interval.level_name, 0) > level_rank.get(best, 0):
                         found[interval.type_name] = interval.level_name
         run.warnings = found
+    return unmatched
 
 
 # ---------------------------------------------------------------- 집계

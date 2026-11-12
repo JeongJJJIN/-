@@ -400,3 +400,170 @@ details.data-table > summary { cursor: pointer; color: var(--link); font-size: 1
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ====================================================================
+   철도 특보 지도 (rail.html)
+   ==================================================================== */
+:root {
+  --map-sea: #e4e9ed;
+  --map-land: #fcfcfb;
+  --map-line: #b9b8ae;
+  --rail: #2b2b29;
+  /* 공식 발표 상태 — 채움의 진하기와 무늬로도 구분된다(진한 채움 = 경보, 옅은 채움 = 주의보, 빗금 = 예비특보) */
+  --z-warn: #d03b3b;
+  --z-adv: #f0b0ae;
+  --z-pre-bg: #fbe9e8;
+  --z-pre-line: #d03b3b;
+  /* 계산한 가능성 — 점무늬 */
+  --p-high-bg: #fbe6dc;
+  --p-high-dot: #d95926;
+  --p-caution-bg: #fdf1d2;
+  --p-caution-dot: #c98500;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --map-sea: #0f1317;
+    --map-land: #242423;
+    --map-line: #4a4a45;
+    --rail: #e6e5e0;
+    --z-warn: #d84a4a;
+    --z-adv: #7a2b2b;
+    --z-pre-bg: #2c1b1b;
+    --z-pre-line: #d84a4a;
+    --p-high-bg: #3d2518;
+    --p-high-dot: #ec835a;
+    --p-caution-bg: #3a2f10;
+    --p-caution-dot: #fab219;
+  }
+}
+
+/* 화면 이동 탭 (두 화면 공통) */
+.tabs { display: flex; gap: 4px; margin-top: 12px; border-bottom: 1px solid var(--hair); }
+.tabs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 14px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+
+/* 지도 */
+.map-card { position: relative; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.map { width: 100%; aspect-ratio: 3 / 4; max-height: 74vh; background: var(--map-sea); }
+.map > .empty { padding: 16px; }
+.map svg { display: block; width: 100%; height: 100%; touch-action: pan-y; cursor: grab; -webkit-user-select: none; user-select: none; }
+.map svg:active { cursor: grabbing; }
+.map svg:focus-visible { outline-offset: -3px; }
+
+.zone { fill: var(--map-land); stroke: var(--map-line); stroke-width: 0.7px; vector-effect: non-scaling-stroke; cursor: pointer; }
+.zone.z-adv { fill: var(--z-adv); }
+.zone.z-warn { fill: var(--z-warn); }
+.zone:hover { stroke: var(--ink-2); stroke-width: 1.2px; }
+.zone.picked { stroke: var(--ink); stroke-width: 2.4px; }
+.hatch-bg { fill: var(--z-pre-bg); }
+.hatch-line { stroke: var(--z-pre-line); }
+.dot-high-bg { fill: var(--p-high-bg); }
+.dot-high-dot { fill: var(--p-high-dot); }
+.dot-caution-bg { fill: var(--p-caution-bg); }
+.dot-caution-dot { fill: var(--p-caution-dot); }
+
+.rail, .rail-case { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; }
+.rail-case { stroke: var(--map-land); stroke-width: 3.4px; opacity: 0.85; }
+.rail-case.fast { stroke-width: 5px; }
+.rail { stroke: var(--rail); stroke-width: 1.3px; }
+.rail.fast { stroke-width: 2.8px; }
+
+/* 역 표시와 이름은 화면에서 늘 같은 크기로 보이게 --u(화면 1px 의 지도 길이)로 맞춘다 */
+.st { fill: var(--map-land); stroke: var(--rail); stroke-width: 1.3; transform-box: fill-box; transform-origin: center; transform: scale(var(--u, 1)); pointer-events: none; }
+.st.r2 { display: none; }
+.zoom1 .st.r2 { display: inline; }
+.st.picked { display: inline; fill: var(--focus); stroke: var(--ink); transform: scale(calc(var(--u, 1) * 1.7)); }
+.lb {
+  display: none;
+  fill: var(--ink);
+  font-size: calc(var(--u, 1) * 11.5px);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--map-land);
+  stroke-width: calc(var(--u, 1) * 3px);
+  stroke-linejoin: round;
+  transform: translate(calc(var(--u, 1) * 6px), calc(var(--u, 1) * 4px));
+  pointer-events: none;
+}
+.lb.show { display: inline; }  /* 어떤 이름을 보일지는 rail.js 의 placeLabels 가 정한다 */
+
+.map-tools { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--hair); }
+.map-tools button {
+  min-width: 44px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--axis);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+#zoom-in, #zoom-out { font-size: 20px; line-height: 1; }
+#zoom-jn { margin-right: auto; }
+
+.map-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 10px 14px; list-style: none; border-top: 1px solid var(--hair); color: var(--ink-2); font-size: 13px; }
+.map-legend li, .legend li { display: flex; align-items: center; white-space: nowrap; }
+.swatch { flex: none; width: 14px; height: 14px; margin-right: 6px; border-radius: 3px; border: 1px solid var(--map-line); }
+.swatch.z-warn { background: var(--z-warn); }
+.swatch.z-adv { background: var(--z-adv); }
+.swatch.z-pre { background: repeating-linear-gradient(45deg, var(--z-pre-line) 0 2px, var(--z-pre-bg) 2px 5px); }
+.swatch.p-high { background: radial-gradient(circle, var(--p-high-dot) 1.3px, transparent 1.6px) 0 0 / 5px 5px, var(--p-high-bg); }
+.swatch.p-caution { background: radial-gradient(circle, var(--p-caution-dot) 1.3px, transparent 1.6px) 0 0 / 5px 5px, var(--p-caution-bg); }
+.swatch.line { width: 18px; height: 0; border: 0; border-top: 1.5px solid var(--rail); border-radius: 0; }
+.swatch.line.fast { border-top-width: 3.5px; }
+.swatch.bar-key { border: 0; background: var(--series-1); }
+.swatch.warn-key { width: 9px; height: 9px; margin: 0 9px 0 3px; border: 0; border-radius: 1px; background: var(--z-warn); transform: rotate(45deg); }
+
+/* 고른 구역·역, 특보 목록 */
+.panel.picked { margin-top: 10px; }
+.panel.picked h3 { margin: 0 0 8px; font-size: 17px; letter-spacing: -0.01em; }
+.panel.picked h3 small { color: var(--ink-2); font-size: 13px; font-weight: 400; }
+.panel.picked p { margin: 8px 0 0; font-size: 15px; }
+.panel.picked p.empty { margin: 0; }
+.plain { margin: 0; padding: 0; list-style: none; }
+.plain li + li { margin-top: 8px; }
+.wlist li + li { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.zone-names { margin-top: 4px; color: var(--ink-2); font-size: 14px; line-height: 1.9; }
+.count { color: var(--ink-3); font-size: 13px; }
+.linklike { padding: 4px 0; border: 0; background: none; color: var(--link); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.pill { display: inline-block; padding: 0 8px; border: 1px solid transparent; border-radius: 999px; font-size: 12px; font-weight: 700; line-height: 1.7; white-space: nowrap; vertical-align: 1px; }
+.pill.warn { background: var(--z-warn); color: #fff; }
+.pill.adv { background: var(--z-adv); color: var(--ink); }
+.pill.pre { background: var(--z-pre-bg); border-color: var(--z-pre-line); border-style: dashed; color: var(--ink); }
+.pill.p-high { background: var(--p-high-bg); border-color: var(--p-high-dot); color: var(--ink); }
+.pill.p-caution { background: var(--p-caution-bg); border-color: var(--p-caution-dot); color: var(--ink); }
+
+/* 실시간 위치 안내 */
+.live p { margin: 0 0 12px; color: var(--ink-2); font-size: 15px; }
+.button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 18px; border-radius: 10px; background: var(--ink); color: var(--surface); font-weight: 700; text-decoration: none; }
+
+/* 지연 통계 */
+.sub-h { margin: 20px 0 8px; color: var(--ink-2); font-size: 15px; font-weight: 700; }
+#delay > .sub-h:first-child { margin-top: 0; }
+tr.strong th, tr.strong td { font-weight: 700; }
+.chart .bar { fill: var(--series-1); }
+.chart .bar-g { outline: none; }
+.chart .bar-g:hover .bar, .chart .bar-g:focus .bar { opacity: 0.78; }
+.chart .bar-g:focus-visible rect { stroke: var(--focus); stroke-width: 2; }
+.chart .warn-mark { fill: var(--z-warn); }
+.lb.picked { font-weight: 800; }
+/* 좁은 화면에서도 옆으로 밀지 않고 한눈에 보이게: 첫 칸은 줄바꿈을 허용한다 */
+table.fit tbody th { white-space: normal; }
+table.fit td { vertical-align: top; }
+table.fit thead th { min-width: 3.2em; }
+/* 마우스로 누를 때는 테두리를 그리지 않는다(글쇠로 옮겨 올 때만 표시) */
+.map svg:focus:not(:focus-visible) { outline: none; }

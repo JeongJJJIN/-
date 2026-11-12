@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>철도 특보 지도 · 기상특보 가능성</title>
+  <meta name="description" content="전국 철도 노선과 역 위에 현재 기상특보 구역을 표시하고, 전날까지의 열차 지연과 특보의 관계를 보여 줍니다. 참고용이며 공식 발표가 우선합니다.">
+  <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css?v=__BUILD__">
+</head>
+<body>
+  <div class="notice" role="note">
+    <svg class="notice-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 18.5 17h-17L10 2.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 8v4.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="14.6" r="1" fill="currentColor"/></svg>
+    <span>참고용입니다. 공식 특보·예비특보가 우선합니다.</span>
+  </div>
+
+  <header class="masthead">
+    <div class="wrap">
+      <div class="title-row">
+        <h1>철도 특보 지도</h1>
+        <p class="updated" id="updated" aria-live="polite">불러오는 중…</p>
+      </div>
+      <nav class="tabs" aria-label="화면 이동">
+        <a href="./">특보 가능성</a>
+        <a href="rail.html" aria-current="page">철도 지도</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap" id="main">
+    <div id="alerts"></div>
+
+    <section class="block" aria-labelledby="h-map">
+      <div class="block-head">
+        <h2 id="h-map">지금 특보가 발효된 구역과 철도</h2>
+        <p class="hint">구역이나 역을 누르면 아래에 내용이 나옵니다. 지도는 두 손가락으로 움직이고 확대합니다(PC는 끌기, Ctrl+휠).</p>
+      </div>
+      <div class="chips" id="type-chips" role="group" aria-label="특보 종류 고르기"></div>
+      <div class="map-card">
+        <div class="map-tools" role="group" aria-label="지도 조작">
+          <button type="button" id="zoom-all">전국</button>
+          <button type="button" id="zoom-jn">전남</button>
+          <button type="button" id="zoom-out" aria-label="축소">−</button>
+          <button type="button" id="zoom-in" aria-label="확대">+</button>
+        </div>
+        <div class="map" id="map"></div>
+        <ul class="map-legend" id="legend"></ul>
+      </div>
+      <div id="picked" class="panel picked" aria-live="polite"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-live">
+      <h2 id="h-live">실시간 열차 위치</h2>
+      <div class="panel live">
+        <p>열차의 현재 위치와 지연은 코레일이 직접 제공하는 화면에서 확인하세요. 공개된 자료에는 실시간 위치가 없어 이 지도에는 열차를 표시하지 않습니다.</p>
+        <a class="button" href="https://gis.korail.com/korailTalk/entrance?route=main" target="_blank" rel="noopener">코레일 실시간 열차위치 열기</a>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="h-list">
+      <h2 id="h-list">특보 발효 구역 목록</h2>
+      <div id="warning-list" class="panel"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-delay">
+      <div class="block-head">
+        <h2 id="h-delay">열차 지연과 특보 (어제까지)</h2>
+        <p class="hint" id="delay-period"></p>
+      </div>
+      <div id="delay"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-about">
+      <h2 id="h-about">자료와 한계</h2>
+      <div class="about">
+        <details>
+          <summary>어떻게 계산하나요</summary>
+          <div class="inner">
+            <ul>
+              <li><b>종착 지연</b>: 종착역 실제 도착 시각 − 계획 도착 시각. 일찍 도착한 열차는 0분으로 셉니다. 역별 계획 시각은 공개되지 않아 종착역 기준만 계산합니다.</li>
+              <li><b>특보 구간 통과</b>: 열차가 정차한 역이 속한 특보구역에, 그 역을 지난 시각에 특보가 발효 중이었던 경우입니다. 정차하지 않고 지나간 구역은 반영되지 않습니다.</li>
+              <li>특보와 지연이 <b>같은 때 일어났다</b>는 것을 보여 줄 뿐, 특보가 지연의 원인이라는 뜻은 아닙니다. 사고·고장·선로 작업 등 다른 원인이 섞여 있습니다.</li>
+              <li>운행 기록은 코레일이 전날까지만 공개하므로 통계는 하루 늦습니다. 열차 종류는 열차번호 대역으로 나눈 것입니다.</li>
+            </ul>
+          </div>
+        </details>
+        <details>
+          <summary>자료 출처</summary>
+          <div class="inner">
+            <ul>
+              <li>특보·예비특보: 기상청 (공공데이터포털 기상특보 조회서비스)</li>
+              <li>특보구역 경계: 기상청 날씨누리 특보구역(2026-06-01 기준)을 단순화해 사용</li>
+              <li>열차 운행 기록: 한국철도공사 열차운행정보 (공공데이터포털)</li>
+              <li>철도 노선·역 위치: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a> (ODbL), 가공해 사용. 역코드는 한국철도공사 자료와 연결</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <p>이 화면은 공개 자료를 기계적으로 종합한 <strong>참고 자료</strong>입니다. 열차 운행 여부와 지연은 <a href="https://www.korail.com" rel="noopener">코레일</a>의 안내를, 기상특보는 <a href="https://www.weather.go.kr/w/special-report/overall.do" rel="noopener">기상청 날씨누리</a>를 확인하세요.</p>
+      <p class="credits">기상자료: 기상청 · 열차 운행 기록: 한국철도공사 · 지도: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a></p>
+    </div>
+  </footer>
+
+  <noscript><p class="noscript">이 페이지는 자바스크립트가 필요합니다.</p></noscript>
+  <script src="rail.js?v=__BUILD__" defer></script>
+</body>
+</html>

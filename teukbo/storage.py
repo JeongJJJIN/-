@@ -113,6 +113,7 @@ def build_latest(
                 "id": ra.region.id,
                 "name": ra.region.name,
                 "province": ra.region.province,
+                "zones": list(ra.region.zone_codes),
                 "models": ra.models_used,
                 "top": ({"hazard": top.hazard.id, "grade": top.grade, "p": top.probability} if top else None),
                 "official": {

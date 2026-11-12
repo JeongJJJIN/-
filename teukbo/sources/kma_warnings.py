@@ -308,6 +308,24 @@ def parse_pwn_cd(items: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str, str
     return {k: v[1] for k, v in latest.items()}
 
 
+def fetch_pwn_events(key: str, ymd: str, http_opts: Mapping[str, Any] | None = None) -> list[Mapping[str, Any]]:
+    """그날(YYYYMMDD) 발표된 특보 발표·해제 이력(getPwnCd). 없으면 빈 목록. 조회 한도는 약 60일 전까지."""
+    opts = http_opts or {}
+    payload = get_json(
+        f"{DATA_GO_KR_BASE}/getPwnCd",
+        {"serviceKey": key, "pageNo": 1, "numOfRows": 1000, "dataType": "JSON", "fromTmFc": ymd, "toTmFc": ymd},
+        timeout=float(opts.get("timeout_seconds", 30)),
+        retries=min(int(opts.get("retries", 3)), 2),
+        backoff=float(opts.get("backoff_seconds", 3)),
+        label=f"특보코드 {ymd}",
+    )
+    try:
+        items, _ = extract_items(payload, "특보코드")
+    except NoData:
+        return []
+    return items
+
+
 def _datagokr_start_times(key: str, now: datetime, http_opts: Mapping[str, Any]) -> dict[tuple[str, str, str], datetime]:
     """최근 며칠의 발표 이력에서 발효 시각을 모은다(하루 단위 조회). 실패한 날은 건너뛴다."""
     found: dict[tuple[str, str, str], datetime] = {}

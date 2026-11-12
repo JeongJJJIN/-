@@ -194,6 +194,7 @@ def run_demo(cfg: Config, now: datetime, data_dir: Path, days: int) -> int:
             write_web_files(cfg, t, assessments, by_region, sources, model_status, data_dir, demo=True)
             storage.write_json(data_dir / "warnings.json", storage.build_national(national, cfg, t, sources["kma_warnings"]))
     storage.write_json(data_dir / "accuracy.json", accuracy_mod.compute_accuracy(history_dir, cfg, now), pretty=True)
+    storage.write_json(data_dir / "rail" / "summary.json", demo_mod.rail_summary(cfg, now))
     log.info("데모 자료 생성 완료: %s (실제 예보가 아닙니다)", data_dir)
     return EXIT_OK
 

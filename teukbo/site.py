@@ -56,6 +56,8 @@ def build_site(data_dir: Path, out_dir: Path, web_dir: Path | None = None) -> st
     for name in ("accuracy.json", "warnings.json"):
         if (data_dir / name).is_file():
             shutil.copy2(data_dir / name, site_data / name)
+    if (data_dir / "rail" / "summary.json").is_file():
+        shutil.copy2(data_dir / "rail" / "summary.json", site_data / "rail.json")
     if (data_dir / "detail").is_dir():
         shutil.copytree(data_dir / "detail", site_data / "detail")
     return build

@@ -155,5 +155,59 @@ def national_raws(cfg: Config, official: dict[str, RegionOfficial]) -> list:
                     continue
                 seen.add((w.status, w.type_name, level_name, code))
                 raws.append(RawWarning(w.status, w.type_name, level_name, table.name(code), None, code, w.effective_from, w.issued_at, w.expected_text))
+    # 전국 지도를 점검할 수 있게, 계산 대상 지역 밖에도 가상의 특보를 몇 건 둔다
+    for type_name, level_name, parent, names in _DEMO_NATIONAL:
+        for name in names:
+            for code in table.resolve(name, parent):
+                raws.append(RawWarning("active", type_name, level_name, table.name(code), parent, code))
     return raws
+
+
+_DEMO_NATIONAL = [
+    ("호우", "경보", "경상남도", ["하동", "남해", "사천"]),
+    ("호우", "주의보", "경상남도", ["진주", "통영", "거제", "산청"]),
+    ("강풍", "주의보", None, ["부산", "울산", "제주도"]),
+    ("건조", "주의보", "강원도", ["강릉평지", "동해평지", "삼척평지", "속초평지"]),
+]
+
+
+def rail_summary(cfg: Config, now: datetime, days: int = 14) -> dict:
+    """가상의 열차 지연 통계(화면 점검용). 비가 온 날에는 전라·경전선 열차가 특보 구간을 지나며 더 늦는다."""
+    from . import rail
+
+    settings = cfg.settings.raw.get("rail", {})
+    lines = [("경부선", 1, 120, "서울", "부산"), ("호남선", 401, 60, "용산", "목포"), ("전라선", 501, 40, "용산", "여수엑스포"),
+             ("경전선", 1941, 14, "순천", "부전"), ("목포보성선", 1971, 8, "목포", "순천"), ("중앙선", 1601, 30, "청량리", "안동"), ("경춘선", 2001, 36, "용산", "춘천")]
+    summaries = []
+    for back in range(days, 0, -1):
+        day = now - timedelta(days=back)
+        ymd = day.strftime("%Y%m%d")
+        rng = random.Random(f"rail|{ymd}")
+        rainy = back in (1, 8)
+        runs = []
+        for line, first_no, count, origin, dest in lines:
+            for i in range(count):
+                dep = day.replace(hour=5, minute=0) + timedelta(minutes=int(i * 1000 / count))
+                arr = dep + timedelta(minutes=150)
+                warned = rainy and line in ("전라선", "경전선", "목포보성선")
+                delay = max(-3, int(rng.gauss(14 if warned else 2, 9 if warned else 3)))
+                run = rail.TrainRun(ymd=ymd, trn_no=f"{first_no + i:05d}", line=line, direction="D", origin=origin, dest=dest, plan_dep=dep, plan_arr=arr)
+                run.stops = [rail.Stop("a", origin, rail.STOP_ORIGIN, None, dep), rail.Stop("b", dest, rail.STOP_TERMINUS, arr + timedelta(minutes=delay), None)]
+                if warned:
+                    run.warnings = {"호우": "경보" if i % 3 == 0 else "주의보"}
+                runs.append(run)
+        summaries.append(rail.summarize_day(ymd, runs, settings.get("train_classes", []), now))
+    summary = rail.aggregate(summaries)
+    latest = summaries[-1]
+    idx = {name: i for i, name in enumerate(latest["fields"])}
+    top = sorted(latest["trains"], key=lambda t: -(t[idx["arr_delay"]] or 0))[:15]
+    summary["latest_day"] = {
+        "date": latest["date"], "counts": latest["counts"], "all": latest["all"], "clear": latest["clear"],
+        "by_warning": latest["by_warning"], "by_class": latest["by_class"], "by_line": latest["by_line"],
+        "top_delayed": [{name: t[idx[name]] for name in ("trn_no", "line", "class", "origin", "dest", "plan_arr", "arr_delay", "warnings")} for t in top if (t[idx["arr_delay"]] or 0) > 0],
+    }
+    summary["late_minutes"] = settings.get("late_minutes", [5, 10, 20])
+    summary["updated_at"] = now.isoformat(timespec="minutes")
+    summary["demo"] = True
+    return summary
 

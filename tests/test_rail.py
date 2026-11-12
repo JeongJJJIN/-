@@ -219,3 +219,141 @@ class AnalysisTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RailRunTest(unittest.TestCase):
+    """실행부: 받아 온 자료로 날짜별 파일·이력 보관·누적 통계를 만든다(네트워크는 가짜)."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from teukbo import rail_run
+        from teukbo.sources import kma_warnings, korail
+
+        from .helpers import config
+
+        self.rail_run, self.mock = rail_run, mock
+        self.cfg = config()
+        self.dir = Path(tempfile.mkdtemp())
+        self.now = kst(2026, 11, 12, 5, 30)
+        self.calls = {"info": [], "plan": [], "events": []}
+
+        def info(_key, ymd, _opts=None):
+            self.calls["info"].append(ymd)
+            if ymd == "20261111":
+                return ktx501("08:20")
+            if ymd == "20261110":
+                rows = ktx501("08:05")
+                for r in rows:
+                    r["run_ymd"] = "20261110"
+                    for k in ("trn_arvl_dt", "trn_dptre_dt"):
+                        if r[k]:
+                            r[k] = r[k].replace("2026-11-11", "2026-11-10")
+                return rows
+            return []  # 그 밖의 날은 자료 없음
+
+        def plan_rows(_key, ymd, _opts=None):
+            self.calls["plan"].append(ymd)
+            p = plan("00501", "용산", "여수엑스포", "05:10", "08:05", ymd=ymd)
+            for k in ("trn_plan_dptre_dt", "trn_plan_arvl_dt"):
+                p[k] = p[k].replace("2026-11-11", f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}")
+            return [p]
+
+        def events(_key, ymd, _opts=None):
+            self.calls["events"].append(ymd)
+            if ymd == "20261111":  # 순천 호우주의보 06시~14시
+                return [event("L1051200", 2, 0, "1", 202611110500, start=202611110600), event("L1051200", 2, 0, "2", 202611111400, end=202611111400)]
+            return []
+
+        self.patches = [
+            mock.patch.object(korail, "fetch_run_info", side_effect=info),
+            mock.patch.object(korail, "fetch_run_plan", side_effect=plan_rows),
+            mock.patch.object(kma_warnings, "fetch_pwn_events", side_effect=events),
+            # 시험용 역 표: 순천역(S2) → 순천 구역
+            mock.patch.object(rail_run, "load_station_zones", return_value=({"S2": ["L1051200"]}, {"여수엑스포": ["L1051000"]})),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.env = {"DATA_GO_KR_SERVICE_KEY": "k"}
+
+    def _day(self, name):
+        import json
+
+        return json.loads((self.dir / "rail" / "days" / name).read_text(encoding="utf-8"))
+
+    def test_processes_recent_days_and_writes_summary(self):
+        import json
+
+        self.assertEqual(self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=3), 0)
+        self.assertEqual(self.calls["info"], ["20261111", "20261110", "20261109"])  # 최근 날짜부터, 한 번에 3일
+        files = sorted(p.name for p in (self.dir / "rail" / "days").glob("*.json"))
+        self.assertEqual(files, ["2026-11-10.json", "2026-11-11.json"])  # 자료 없는 날은 파일을 만들지 않는다
+        day = self._day("2026-11-11.json")
+        row = dict(zip(day["fields"], day["trains"][0]))
+        self.assertEqual((row["arr_delay"], row["warnings"], row["class"]), (15, ["호우주의보"], "KTX"))
+        self.assertEqual(day["unmatched_stations"], {"용산": 1})  # 표에 없는 역은 이름을 남겨 보완할 수 있게
+        self.assertEqual(dict(zip(day["fields"], self._day("2026-11-10.json")["trains"][0]))["warnings"], [])
+        summary = json.loads((self.dir / "rail" / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["period"], {"from": "2026-11-10", "to": "2026-11-11", "days": 2})
+        self.assertEqual((summary["warned"]["n"], summary["warned"]["mean"], summary["clear"]["n"], summary["clear"]["mean"]), (1, 15.0, 1, 0.0))
+        self.assertEqual(summary["latest_day"]["date"], "2026-11-11")
+        self.assertEqual(summary["latest_day"]["top_delayed"][0]["trn_no"], "00501")
+
+    def test_events_are_cached_and_past_days_not_refetched(self):
+        import json
+
+        self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=1)
+        first = len(self.calls["events"])
+        self.assertEqual(first, 60)  # 지난 59일 + 오늘
+        cache = json.loads((self.dir / "rail" / "events" / "2026-11.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(cache["days"]["20261111"]), 2)
+        self.calls["events"].clear()
+        self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=1)
+        self.assertEqual(self.calls["events"], ["20261112"])  # 아직 끝나지 않은 오늘만 다시 받는다
+
+    def test_second_run_continues_with_older_days(self):
+        self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=1)
+        self.calls["info"].clear()
+        self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=2)
+        self.assertEqual(self.calls["info"], ["20261110", "20261109"])  # 이미 만든 11일은 건너뛴다
+
+    def test_time_budget_leaves_the_rest_for_next_run(self):
+        from teukbo import rail_run as real
+
+        ticks = iter([0.0, 10.0, 500.0, 500.0, 500.0])
+        with self.mock.patch.object(real.time, "monotonic", side_effect=lambda: next(ticks)):
+            self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=5)
+        self.assertEqual(self.calls["info"], ["20261111"])  # 한 날만 처리하고 멈춘다
+        self.assertTrue((self.dir / "rail" / "summary.json").is_file())  # 처리한 만큼은 요약에 반영
+
+    def test_no_key_does_nothing(self):
+        self.assertEqual(self.rail_run.run(self.cfg, self.now, self.dir, {}, max_days=3), 0)
+        self.assertFalse((self.dir / "rail").exists())
+        self.assertEqual(self.calls["info"], [])
+
+    def test_unsubscribed_api_stops_quietly(self):
+        from teukbo.http import FetchError
+        from teukbo.sources import korail
+
+        with self.mock.patch.object(korail, "fetch_run_info", side_effect=FetchError("코레일: SERVICE_KEY_IS_NOT_REGISTERED_ERROR")) as denied:
+            self.assertEqual(self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=5), 0)
+        self.assertEqual(denied.call_count, 1)  # 신청이 안 된 상태면 한 번만 시도하고 멈춘다
+        self.assertFalse((self.dir / "rail" / "days").exists())
+
+    def test_real_station_table_loads(self):
+        for p in self.patches:
+            pass
+        from teukbo import rail_run as real
+
+        self.patches[3].stop()
+        try:
+            by_code, by_name = real.load_station_zones()
+        finally:
+            self.patches[3].start()
+        self.assertEqual(by_code["3900271"], ["L1051200"])  # 순천역 → 순천
+        self.assertEqual(by_code["3900714"], ["L1050900"])  # 벌교역 → 보성
+        self.assertEqual(by_name["강진"], ["L1051400"])  # 역코드표에 없는 새 역은 이름으로
+        self.assertGreater(len(by_code), 400)
