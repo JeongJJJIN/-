@@ -16,7 +16,7 @@
 
   const Live = window.TeukboLive;
   // base = 받아 온 latest.json 그대로, latest = 그 위에 실시간 특보를 덮은 것(화면은 이것을 그린다)
-  const state = { base: null, latest: null, live: null, liveFailed: false, liveSig: "", accuracy: null, details: {}, regionId: null, chartPick: {}, open: new Set(), showQuiet: false };
+  const state = { base: null, latest: null, live: null, liveFailed: false, liveSig: "", geo: null, details: {}, regionId: null, chartPick: {}, open: new Set(), showQuiet: false };
 
   // ------------------------------------------------------------ DOM 도우미
 
@@ -86,7 +86,6 @@
       state.base = latest;
       state.latest = Live.applyToLatest(latest, state.live, liveStale());
       if (changed) state.details = {};
-      getJson("data/accuracy.json").then((acc) => { state.accuracy = acc; renderAccuracy(); }).catch(() => renderAccuracy());
       if (changed || !$("region").options.length) renderAll();
       else renderUpdated();
       if (changed) loadLive();
@@ -122,6 +121,7 @@
       renderAlerts();
       renderOverview();
       renderRegion();
+      renderRailOutlook();
     } else {
       renderOfficial();
       renderNow();
@@ -648,24 +648,54 @@
 
   // ------------------------------------------------------------ 적중률
 
-  function renderAccuracy() {
-    const acc = state.accuracy, box = clear($("accuracy")), period = $("accuracy-period");
-    if (!acc) { period.textContent = ""; box.append(h("div", { class: "panel" }, h("p", { class: "empty", text: "적중률 자료를 불러오지 못했습니다." }))); return; }
-    const p = acc.period || {};
-    period.textContent = p.from ? `${fmtClock(p.from)} ~ ${fmtClock(p.to)} · ${p.runs}회 수집 · 실제 특보 발효 ${acc.events}건` : "아직 수집 이력이 없습니다.";
-    const tile = (label, stat, hitKey, totalKey, unitWord, emptyWord) => {
-      const total = stat ? stat[totalKey] : 0;
-      const value = total ? h("p", { class: "value" }, String(Math.round(stat.rate * 100)), h("small", null, "%")) : h("p", { class: "value pending", text: "집계 중" });
-      return h("div", { class: "tile" }, h("p", { class: "label", text: label }), value, h("p", { class: "sub", text: total ? `${total}${unitWord} 중 ${stat[hitKey]}건` : emptyWord }));
-    };
-    const tiles = h("div", { class: "tiles" });
-    for (const lead of acc.lead_hours || []) {
-      tiles.append(tile(`사전 포착률 · ${lead}시간 전`, (acc.capture || {})[String(lead)], "captured", "events", "건의 특보", "검증할 특보 발효 사례가 아직 없습니다"));
+  // ------------------------------------------------------------ 철도 구간 전망
+
+  /** 계산 대상 지역 가운데 ‘주의’ 이상인 곳을 지나는 노선. 지역의 대표 특보(가장 높은 등급)를 그대로 쓴다 — 새로 계산하지 않는다. */
+  function renderRailOutlook() {
+    const box = clear($("rail-outlook")), latest = state.latest, geo = state.geo;
+    $("horizon2").textContent = latest.horizon_hours;
+    if (!geo) { box.append(h("p", { class: "empty", text: "노선 자료를 불러오는 중…" })); return; }
+    if (geo.failed) { box.append(h("p", { class: "empty", text: "노선 자료를 불러오지 못했습니다." })); return; }
+    const regionByZone = new Map();
+    for (const r of latest.regions) for (const code of r.zones || []) if (!regionByZone.has(code)) regionByZone.set(code, r);
+    const hazardName = Object.fromEntries(latest.hazards.map((hz) => [hz.id, hz.name]));
+    const rows = [];
+    let covered = 0;
+    for (const line of geo.lines) {
+      const items = [];  // 노선이 지나는 순서대로, 지역마다 한 번
+      for (const [zone, keys] of line.parts) {
+        const r = regionByZone.get(zone);
+        if (!r) continue;
+        let item = items.find((x) => x.region === r);
+        if (!item) { item = { region: r, stations: [] }; items.push(item); }
+        for (const key of keys) { const name = geo.stationName.get(key); if (name && !item.stations.includes(name)) item.stations.push(name); }
+      }
+      if (items.length) covered += 1;
+      const hot = items.filter((x) => x.region.top && GRADE_RANK[x.region.top.grade] >= GRADE_RANK.caution);
+      if (hot.length) rows.push({ line, hot, top: Math.max(...hot.map((x) => GRADE_RANK[x.region.top.grade])), p: Math.max(...hot.map((x) => x.region.top.p || 0)) });
     }
-    tiles.append(tile("오경보율 · ‘주의’ 이상", (acc.false_alarm || {}).caution_or_higher, "false", "alerts", "회 예측", "검증할 예측이 아직 없습니다"));
-    tiles.append(tile("오경보율 · ‘높음’", (acc.false_alarm || {}).high, "false", "alerts", "회 예측", "검증할 예측이 아직 없습니다"));
-    box.append(tiles, h("p", { class: "note" },
-      `사전 포착률: 실제로 발효된 특보 가운데, 발효 12·24시간 전에 ‘주의’ 이상으로 표시했던 비율. 오경보율: ‘주의’ 이상으로 표시한 예측 가운데, 이후 ${acc.horizon_hours}시간 안에 실제 특보가 없었던 비율(같은 상황을 3시간마다 다시 세므로 건수는 예측 횟수 기준). 기상청 발표를 반영하기 전의 계산 등급으로 비교합니다. 표본이 적은 동안에는 참고만 하세요.`));
+    rows.sort((a, b) => b.top - a.top || b.p - a.p || a.line.name.localeCompare(b.line.name, "ko"));
+    if (!rows.length) {
+      box.append(h("p", { class: "empty", text: `향후 ${latest.horizon_hours}시간 안에 ‘주의’ 이상으로 계산된 철도 구간이 없습니다.` }),
+        h("p", { class: "note", text: `계산 대상 지역을 지나는 노선 ${covered}개를 확인했습니다.` }));
+      return;
+    }
+    const list = h("ul", { class: "plain outlook" });
+    for (const { line, hot } of rows) {
+      list.append(h("li", null, h("h3", null, line.name, line.fast ? h("small", null, " 고속선") : null),
+        h("ul", { class: "plain" }, hot.map(({ region: r, stations }) => {
+          const sum = r.hazards[r.top.hazard] || {};
+          const upcoming = sum.g === "active" && isFuture(sum.official_from);
+          const when = sum.g === "active" ? (sum.official_from ? `${fmtDayHour(sum.official_from)} ${upcoming ? "발효 예정" : "발효"}` : "") : sum.from ? `${fmtRange(sum.from, sum.to)} 기준 도달 예상` : "";
+          return h("li", { class: "outlook-item" },
+            badge(r.top.grade, upcoming ? "발효 예정" : GRADE_LABEL[r.top.grade]),
+            h("div", null,
+              h("p", { class: "outlook-main" }, h("button", { class: "linklike", type: "button", onclick: () => { selectRegion(r.id); window.scrollTo({ top: 0, behavior: "smooth" }); } }, r.name),
+                ` · ${hazardName[r.top.hazard] || r.top.hazard}`, r.top.p != null && r.top.grade !== "active" ? ` ${r.top.p}%` : ""),
+              h("p", { class: "outlook-sub", text: [when, stations.length ? `구간의 역: ${stations.join(", ")}` : "구간에 역 없음"].filter(Boolean).join(" · ") })));
+        }))));
+    }
+    box.append(list, h("p", { class: "note" }, "지역별 가능성을 노선에 옮겨 적은 것입니다(시·군청 위치 기준). 지금 발효 중인 전국 특보와 노선은 ", h("a", { href: "rail.html" }, "지금 지도"), "에서, 과거 특보 때의 열차 지연은 ", h("a", { href: "analysis.html" }, "분석"), "에서 봅니다."));
   }
 
   // ------------------------------------------------------------ 계산 방식·출처
@@ -751,7 +781,7 @@
     renderRegionSelect();
     renderOverview();
     renderRegion();
-    renderAccuracy();
+    renderRailOutlook();
     renderAbout();
   }
 
@@ -772,7 +802,11 @@
     liveTimer += 60;
     if (!document.hidden && liveConfig() && liveTimer >= every) { liveTimer = 0; loadLive(); } else refreshLive();
   }, 60 * 1000);
-  Live.mountRadar($("radar"));
+  // 노선이 지나는 구역·역(철도 구간 전망용)은 첫 화면이 뜬 뒤에 받는다
+  Promise.all([getJson("geo/lines.json"), getJson("geo/stations.json")]).then(([lines, stations]) => {
+    state.geo = { lines, stationName: new Map(stations.map((st) => [st.code || `name:${st.name}`, st.name.replace(/^S(?=[가-힣])/, "")])) };
+    if (state.latest) renderRailOutlook();
+  }).catch(() => { state.geo = { lines: [], stationName: new Map(), failed: true }; if (state.latest) renderRailOutlook(); });
   let resizeTimer = 0, lastWidth = window.innerWidth;
   window.addEventListener("resize", () => {
     if (window.innerWidth === lastWidth) return;

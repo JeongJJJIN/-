@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -289,6 +290,52 @@ def delay_stats(delays: Sequence[int], late_minutes: Sequence[int] = (5, 10, 20)
     return out
 
 
+MIN_SAMPLE = 30  # 이보다 적으면 '자료 부족'으로 본다
+MIN_EFFECT_MINUTES = 1.0  # 이보다 작은 차이는 통계적으로 뚜렷해도 '차이 없음'으로 본다(운영상 의미가 없다)
+
+
+def adjusted_difference(by_line: Mapping[str, Mapping[str, Sequence[int]]]) -> dict[str, Any]:
+    """같은 노선끼리 비교한 지연 차이: 특보 구간을 지난 열차 − 지나지 않은 열차 (분).
+
+    노선마다 평소 지연이 다르므로(경부선은 길고 붐빈다), 전체 평균끼리 비교하면 노선 구성의 차이가 섞인다.
+    그래서 노선별로 차이를 구한 뒤 '특보 구간을 지난 열차 수'로 가중 평균한다. 두 쪽 열차가 다 있는 노선만 쓴다.
+    95% 구간은 정규 근사(차이 ± 1.96 × 표준오차). 지연은 조착을 0분으로 본 값이다.
+
+    판정 verdict: "insufficient"(자료 부족) / "later"(더 늦었음) / "earlier"(덜 늦었음) / "no_difference"(뚜렷한 차이 없음)
+    — 같은 때 있었다는 것일 뿐 원인을 뜻하지 않는다(사고·고장·작업, 요일·시간대의 차이가 섞여 있다).
+    """
+    used = 0
+    total = 0
+    weighted = 0.0
+    variance_terms: list[tuple[int, float]] = []
+    for groups in by_line.values():
+        warn = [max(0, d) for d in groups.get("warn", [])]
+        clear = [max(0, d) for d in groups.get("clear", [])]
+        if not warn or len(clear) < 2:
+            continue
+        mean_w, mean_c = sum(warn) / len(warn), sum(clear) / len(clear)
+        var_c = sum((v - mean_c) ** 2 for v in clear) / (len(clear) - 1)
+        var_w = sum((v - mean_w) ** 2 for v in warn) / (len(warn) - 1) if len(warn) > 1 else var_c  # 한 편뿐이면 그 노선의 평소 흩어짐으로 대신한다
+        used += 1
+        total += len(warn)
+        weighted += len(warn) * (mean_w - mean_c)
+        variance_terms.append((len(warn), var_w / len(warn) + var_c / len(clear)))
+    if total == 0:
+        return {"n": 0, "lines": 0, "verdict": "insufficient"}
+    diff = weighted / total
+    se = math.sqrt(sum((n / total) ** 2 * v for n, v in variance_terms))
+    low, high = diff - 1.96 * se, diff + 1.96 * se
+    if total < MIN_SAMPLE:
+        verdict = "insufficient"
+    elif low > 0 and diff >= MIN_EFFECT_MINUTES:
+        verdict = "later"
+    elif high < 0 and diff <= -MIN_EFFECT_MINUTES:
+        verdict = "earlier"
+    else:
+        verdict = "no_difference"
+    return {"n": total, "lines": used, "diff": round(diff, 1), "low": round(low, 1), "high": round(high, 1), "verdict": verdict}
+
+
 def summarize_day(ymd: str, runs: Sequence[TrainRun], classes: Sequence[Mapping[str, Any]], now: datetime) -> dict[str, Any]:
     """하루치 요약 (data/rail/날짜.json). 열차별 한 줄 + 노선·특보별 집계."""
     day = [r for r in runs if r.ymd == ymd]
@@ -350,6 +397,7 @@ def aggregate(days: Sequence[Mapping[str, Any]], recent_days: int = 14) -> dict[
     by_warning: dict[str, list[int]] = {}  # 호우주의보, 호우경보 …
     by_type: dict[str, list[int]] = {}  # 호우, 강풍 …
     by_line_warn: dict[str, dict[str, list[int]]] = {}  # 노선 → {"warn": […], "clear": […]}
+    type_line_warn: dict[str, dict[str, list[int]]] = {}  # 종류 → 노선 → 그 종류의 특보 구간을 지난 열차의 지연
     daily: list[dict[str, Any]] = []
     for day in days:
         idx = {name: i for i, name in enumerate(day.get("fields", []))}
@@ -369,6 +417,7 @@ def aggregate(days: Sequence[Mapping[str, Any]], recent_days: int = 14) -> dict[
                     by_warning.setdefault(name, []).append(delay)
                 for type_name in {n.replace("중대경보", "").replace("주의보", "").replace("경보", "") for n in names}:
                     by_type.setdefault(type_name, []).append(delay)
+                    type_line_warn.setdefault(type_name, {}).setdefault(line, []).append(delay)
             else:
                 slot["clear"].append(delay)
                 clear.append(delay)
@@ -386,6 +435,14 @@ def aggregate(days: Sequence[Mapping[str, Any]], recent_days: int = 14) -> dict[
         "by_type": {k: delay_stats(v) for k, v in sorted(by_type.items())},
         "by_warning": {k: delay_stats(v) for k, v in sorted(by_warning.items())},
         "by_line": lines,
+        # 같은 노선끼리 비교한 차이(특보 구간을 지난 열차 − 지나지 않은 열차)
+        "adjusted": {
+            "all": adjusted_difference(by_line_warn),
+            "by_type": {
+                type_name: adjusted_difference({line: {"warn": delays, "clear": by_line_warn[line]["clear"]} for line, delays in per_line.items()})
+                for type_name, per_line in sorted(type_line_warn.items())
+            },
+        },
         "daily": daily[-recent_days:],
         "latest": days[-1]["date"] if days else None,
     }
