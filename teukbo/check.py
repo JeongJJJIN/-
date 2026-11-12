@@ -85,6 +85,7 @@ def main() -> int:
         print("  건너뜀 (인증키 미설정)")
     else:
         check_korail(data_go_kr_key, now, opts)
+        check_rail_day(data_go_kr_key, now, cfg)
 
     print(f"\n예측 자료 {ok_models}개 사용 가능" + ("" if ok_models else " — 계산할 수 없습니다"))
     return 0 if ok_models else 1
@@ -160,3 +161,40 @@ def check_korail(key: str, now, opts: dict) -> None:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def check_rail_day(key: str, now, cfg) -> None:
+    """어제 하루치 열차 지연 집계를 실제 자료로 끝까지 돌려 본다(임시 폴더에만 쓰고 버린다)."""
+    import tempfile
+    from collections import Counter
+    from pathlib import Path
+
+    from . import rail, rail_run
+
+    print("열차 지연 집계 시험 (어제 하루, 특보 이력 최근 7일)")
+    tmp = Path(tempfile.mkdtemp())
+    days = rail.window_days(now, 7)
+    try:
+        events = rail_run.refresh_events(tmp, key, days, now, cfg.settings.http)
+        intervals = rail.build_intervals(events)
+        print(f"  정상  특보 발표 이력 {len(events)}건 → 발효 구간 {len(intervals)}개: " + ", ".join(f"{k} {v}" for k, v in Counter(i.type_name + i.level_name for i in intervals).most_common(12)))
+        day = rail_run.process_day(cfg, key, days[0], rail.WarningTimeline(intervals), rail_run.load_station_zones(), now)
+    except FetchError as e:
+        print(f"  실패  {e}")
+        return
+    if day is None:
+        print(f"  실패  {days[0]} 운행 기록이 아직 없습니다")
+        return
+    print(f"  정상  {day['date']} 열차 수 {day['counts']}")
+    print(f"        전체 {day['all']}")
+    print(f"        특보 구간을 지나지 않음 {day['clear']}")
+    print(f"        특보별 {day['by_warning'] or '(특보 구간을 지난 열차 없음)'}")
+    print("        종류별 " + ", ".join(f"{k} {v.get('n')}편 평균 {v.get('mean')}분" for k, v in day["by_class"].items()))
+    print("        노선별 " + ", ".join(f"{k} {v.get('n')}편" for k, v in sorted(day["by_line"].items(), key=lambda kv: -kv[1].get("n", 0))))
+    idx = {name: i for i, name in enumerate(day["fields"])}
+    late = sorted((t for t in day["trains"] if t[idx["arr_delay"]] is not None), key=lambda t: -t[idx["arr_delay"]])[:5]
+    for t in late:
+        print("        지연 큰 열차: " + ", ".join(f"{name}={t[idx[name]]!r}" for name in ("trn_no", "class", "line", "origin", "dest", "plan_arr", "arr_delay", "warnings")))
+    unmatched = day.get("unmatched_stations") or {}
+    print(f"        특보구역을 찾지 못한 역 {len(unmatched)}곳: {unmatched or '없음'}")
+
