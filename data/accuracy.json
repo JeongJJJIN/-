@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "updated_at": "2026-11-12T22:38+09:00",
+  "basis": "model_grade",
+  "period": {
+    "from": "2026-11-12T22:38+09:00",
+    "to": "2026-11-12T22:38+09:00",
+    "runs": 1,
+    "window_days": 365
+  },
+  "lead_hours": [
+    12,
+    24
+  ],
+  "horizon_hours": 48,
+  "events": 0,
+  "capture": {
+    "12": {
+      "events": 0,
+      "captured": 0,
+      "rate": null
+    },
+    "24": {
+      "events": 0,
+      "captured": 0,
+      "rate": null
+    }
+  },
+  "false_alarm": {
+    "caution_or_higher": {
+      "alerts": 0,
+      "false": 0,
+      "rate": null
+    },
+    "high": {
+      "alerts": 0,
+      "false": 0,
+      "rate": null
+    }
+  },
+  "by_type": {},
+  "recent_events": []
+}
