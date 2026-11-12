@@ -6,6 +6,7 @@
 환경 변수(인증키) — 코드나 저장소에 직접 쓰지 않는다. GitHub Secrets 로 넣는다.
     DATA_GO_KR_SERVICE_KEY   공공데이터포털 인증키 (단기예보 조회서비스 + 기상특보 조회서비스 활용신청)
     KMA_APIHUB_KEY           기상청 API허브 인증키 (공공데이터포털이 막힐 때의 대체 경로, 선택)
+    TEUKBO_LIVE_URL          실시간 자료(live.json)를 읽어 올 주소 (인증키 아님. 없으면 화면은 3시간 자료만 쓴다)
 인증키가 없어도 Open-Meteo 만으로 계산은 되지만, 발효 특보·예비특보는 '확인 불가'로 표시된다.
 """
 
@@ -107,8 +108,9 @@ def write_web_files(
     model_status: dict[str, dict[str, Any]],
     data_dir: Path,
     demo: bool,
+    live_url: str | None = None,
 ) -> None:
-    latest = storage.build_latest(assessments, cfg, now, sources, model_status, demo=demo)
+    latest = storage.build_latest(assessments, cfg, now, sources, model_status, demo=demo, live_url=live_url)
     detail_dir = data_dir / "detail"
     detail_dir.mkdir(parents=True, exist_ok=True)
     keep = set()
@@ -146,7 +148,9 @@ def run_real(cfg: Config, now: datetime, data_dir: Path, env: Mapping[str, str])
         return EXIT_NO_FORECAST
 
     assessments, by_region = assess_all(cfg, now, forecasts, official)
-    write_web_files(cfg, now, assessments, by_region, sources, model_status, data_dir, demo=False)
+    # 실시간 자료(live.json)의 주소 — 배포 워크플로가 저장소 이름으로 만들어 넣는다
+    live_url = (env.get("TEUKBO_LIVE_URL") or "").strip() or None
+    write_web_files(cfg, now, assessments, by_region, sources, model_status, data_dir, demo=False, live_url=live_url)
     warnings_ok = bool(sources["kma_warnings"].get("ok"))
     storage.write_json(data_dir / "warnings.json", storage.build_national(national, cfg, now, sources["kma_warnings"]))
 
@@ -191,8 +195,9 @@ def run_demo(cfg: Config, now: datetime, data_dir: Path, days: int) -> int:
             history_dir, storage.build_history_run(assessments, cfg, t, {k2: True for k2 in sources}, national=national), t
         )
         if k == 0:
-            write_web_files(cfg, t, assessments, by_region, sources, model_status, data_dir, demo=True)
+            write_web_files(cfg, t, assessments, by_region, sources, model_status, data_dir, demo=True, live_url="data/live.json")
             storage.write_json(data_dir / "warnings.json", storage.build_national(national, cfg, t, sources["kma_warnings"]))
+            storage.write_json(data_dir / "live.json", demo_mod.live_doc(cfg, t, forecasts, official, national))
     storage.write_json(data_dir / "accuracy.json", accuracy_mod.compute_accuracy(history_dir, cfg, now), pretty=True)
     storage.write_json(data_dir / "rail" / "summary.json", demo_mod.rail_summary(cfg, now))
     log.info("데모 자료 생성 완료: %s (실제 예보가 아닙니다)", data_dir)

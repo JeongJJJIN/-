@@ -171,6 +171,42 @@ _DEMO_NATIONAL = [
 ]
 
 
+def live_doc(cfg: Config, now: datetime, forecasts: dict[str, dict[str, ModelSeries]], official: dict[str, RegionOfficial], national: list) -> dict:
+    """가상의 실시간 자료(live.json): 지금 날씨와 앞으로 6시간은 가상 예측값의 가까운 시각에서 가져온다."""
+    from . import live, storage
+    from .timeutil import iso
+
+    status = {"ok": True, "provider": "데모"}
+    warnings = storage.build_national(national, cfg, now, status)
+    warnings.update({"checked_at": iso(now), "error": None})
+    hour = floor_hour(now)
+    regions: dict[str, dict] = {}
+    for region in cfg.regions:
+        entry: dict = {"official": storage.region_official_dict(official[region.id]), "hz": live.hazard_official(official[region.id], cfg)}
+        series = forecasts.get("ecmwf_ifs025", {}).get(region.id)
+        if series is not None:
+            at = {t: i for i, t in enumerate(series.times)}
+
+            def value(name: str, t: datetime) -> float | None:
+                column = series.values.get(name)
+                return column[at[t]] if column is not None and t in at else None
+
+            rain = value("precip", hour) or 0.0
+            entry["now"] = {"temp": value("temp", hour), "rain": rain, "wind": value("wind", hour), "wdir": 200, "rh": int(value("rh", hour) or 0), "pty": 1 if rain >= 0.1 else 0}
+            rows = []
+            for k in range(1, 7):
+                t = hour + k * HOUR
+                mm = value("precip", t) or 0.0
+                text = None if mm < 0.1 else "1mm 미만" if mm < 1 else "50.0mm 이상" if mm >= 50 else "30.0~50.0mm" if mm >= 30 else f"{mm:.1f}mm"
+                rows.append({"t": iso(t), "temp": value("temp", t), "rain": text, "rain_mm": round(mm, 1), "sky": 4 if mm >= 0.1 else 3, "pty": 1 if mm >= 0.1 else 0,
+                             "wind": value("wind", t), "wdir": 200, "rh": int(value("rh", t) or 0), "lgt": 0.0})
+            entry["fcst"] = rows
+        regions[region.id] = entry
+    section = {"available": True, "checked_at": iso(now), "provider": "데모", "error": None}
+    return {"schema": live.SCHEMA, "generated_at": iso(now), "demo": True, "warnings": warnings,
+            "obs": {**section, "base": iso(hour)}, "fcst": {**section, "base": iso(hour - timedelta(minutes=30))}, "regions": regions}
+
+
 def rail_summary(cfg: Config, now: datetime, days: int = 14) -> dict:
     """가상의 열차 지연 통계(화면 점검용). 비가 온 날에는 전라·경전선 열차가 특보 구간을 지나며 더 늦는다."""
     from . import rail

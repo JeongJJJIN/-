@@ -36,6 +36,7 @@ class DemoPipelineTest(unittest.TestCase):
         self.assertEqual(latest["notice"], "참고용입니다. 공식 특보·예비특보가 우선합니다.")
         self.assertEqual(latest["generated_at"], "2026-11-12T21:20+09:00")
         self.assertEqual(latest["horizon_hours"], 48)
+        self.assertEqual(latest["live"], {"url": "data/live.json", "stale_after_minutes": 30, "poll_seconds": 120})
         self.assertEqual([m["id"] for m in latest["models"]], [m.id for m in CFG.settings.models])
         self.assertEqual([h["id"] for h in latest["hazards"]], [h.id for h in CFG.thresholds.hazards])
         self.assertEqual([r["id"] for r in latest["regions"]], [r.id for r in CFG.regions])
@@ -86,6 +87,71 @@ class DemoPipelineTest(unittest.TestCase):
         self.assertIn(("L1082400", "호우경보"), active)  # 남해
         self.assertIn(("L1082500", "강풍주의보"), active)  # 부산동부
 
+    def test_live_file_matches_latest(self):
+        """데모의 실시간 자료는 같은 특보로 만들었으므로, 지역별 공식 발표가 latest.json 과 같아야 한다."""
+        doc = json.loads((self.dir / "live.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["schema"], 1)
+        self.assertTrue(doc["demo"])
+        for name in ("warnings", "obs", "fcst"):
+            self.assertTrue(doc[name]["available"], name)
+            self.assertEqual(doc[name]["checked_at"], "2026-11-12T21:20+09:00", name)
+        for r in self.latest["regions"]:
+            entry = doc["regions"][r["id"]]
+            self.assertEqual(entry["official"], r["official"], r["name"])
+            expected = {hid: [h["official"], h.get("official_level"), h.get("official_from")] for hid, h in r["hazards"].items() if h.get("official")}
+            self.assertEqual(entry["hz"], expected, r["name"])
+            self.assertEqual(len(entry["fcst"]), 6)
+            self.assertEqual(set(entry["now"]), {"temp", "rain", "wind", "wdir", "rh", "pty"})
+
+    def test_browser_overlay_reproduces_server_grades(self):
+        """화면의 덮어쓰기 계산(live.js applyToLatest)이 서버의 계산과 같은 결과를 내는지 node 로 확인한다."""
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node 가 없습니다")
+        script = """
+            const fs = require('fs');
+            global.window = {}; global.document = { addEventListener() {} };
+            const [, liveJs, latestPath, livePath] = process.argv;  // node -e 에서는 인수가 argv[1] 부터 온다
+            eval(fs.readFileSync(liveJs, 'utf8'));
+            const L = window.TeukboLive, base = JSON.parse(fs.readFileSync(latestPath)), live = JSON.parse(fs.readFileSync(livePath));
+            const before = JSON.stringify(base);
+            const now = new Date(live.warnings.checked_at).getTime();
+            Date.now = () => now + 60000;
+            const same = L.applyToLatest(base, live, 30);
+            // 실시간 특보가 달라진 경우: 순천에 호우경보 발효, 나머지는 해제
+            const changed = JSON.parse(JSON.stringify(live));
+            for (const id of Object.keys(changed.regions)) { changed.regions[id].official = { available: true, active: [], preliminary: [] }; changed.regions[id].hz = {}; }
+            changed.regions.suncheon.hz = { heavy_rain_advisory: ['active', 'warning', '2026-11-12T21:00+09:00'], heavy_rain_warning: ['active', 'warning', '2026-11-12T21:00+09:00'] };
+            const other = L.applyToLatest(base, changed, 30);
+            Date.now = () => now + 31 * 60000;
+            const stale = L.applyToLatest(base, changed, 30);
+            const pick = (doc) => doc.regions.map((r) => [r.id, r.top, Object.fromEntries(Object.entries(r.hazards).map(([k, v]) => [k, [v.g, v.mg, v.official || null, v.official_level || null, v.official_from || null]]))]);
+            console.log(JSON.stringify({ same: pick(same), base: pick(base), other: pick(other), staleIsBase: stale === base, untouched: JSON.stringify(base) === before,
+              checked: same.warnings_checked_at, direction: [L.windDir(0), L.windDir(200), L.windDir(350)], sky: [L.skyText({ sky: 3, pty: 0 }), L.skyText({ sky: 4, pty: 1 })] }));
+        """
+        result = subprocess.run([node, "-e", script, str(ROOT / "web" / "live.js"), str(self.dir / "latest.json"), str(self.dir / "live.json")], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertEqual(out["same"], out["base"])  # 같은 특보 → 서버가 계산한 등급·대표 특보와 완전히 같다
+        self.assertTrue(out["staleIsBase"])  # 오래된 실시간 자료는 쓰지 않는다
+        self.assertTrue(out["untouched"])  # 받아 온 원본은 바꾸지 않는다
+        self.assertEqual(out["checked"], "2026-11-12T21:20+09:00")
+        self.assertEqual(out["direction"], ["북", "남남서", "북"])
+        self.assertEqual(out["sky"], ["구름많음", "비"])
+        other = {rid: (top, hz) for rid, top, hz in out["other"]}
+        self.assertEqual(other["suncheon"][1]["heavy_rain_warning"][0], "active")
+        self.assertEqual(other["suncheon"][0]["grade"], "active")
+        self.assertEqual(other["suncheon"][1]["heavy_rain_warning"][2:], ["active", "warning", "2026-11-12T21:00+09:00"])
+        for rid, (top, hz) in other.items():
+            for hid, (g, mg, official, _level, _from) in hz.items():
+                if rid == "suncheon" and hid.startswith("heavy_rain"):
+                    continue
+                self.assertIsNone(official, f"{rid} {hid}")
+                self.assertEqual(g, mg, f"{rid} {hid}")  # 공식 발표가 없으면 계산 등급 그대로
+
     def test_rail_summary(self):
         doc = json.loads((self.dir / "rail" / "summary.json").read_text(encoding="utf-8"))
         self.assertTrue(doc["demo"])
@@ -105,7 +171,7 @@ class DemoPipelineTest(unittest.TestCase):
         build = site.build_site(self.dir, out)
         self.assertEqual(len(build), 10)
         for name in ("index.html", "app.js", "style.css", "sw.js", "manifest.webmanifest", "data/latest.json", "data/accuracy.json", "data/warnings.json", "data/detail/suncheon.json",
-                     "rail.html", "rail.js", "geo/zones.json", "geo/rail.json", "geo/stations.json", "data/rail.json"):
+                     "rail.html", "rail.js", "live.js", "geo/zones.json", "geo/rail.json", "geo/stations.json", "data/rail.json", "data/live.json"):
             self.assertTrue((out / name).is_file(), name)
         self.assertFalse((out / "data" / "rail").exists())  # 날짜별 원자료는 배포하지 않는다
         self.assertIn(build, (out / "sw.js").read_text(encoding="utf-8"))
@@ -231,6 +297,7 @@ class LocalModeTest(unittest.TestCase):
         self.assertEqual(r("/data/warnings.json"), self.data / "warnings.json")
         self.assertEqual(r("/data/detail/suncheon.json"), self.data / "detail" / "suncheon.json")
         self.assertEqual(r("/data/rail.json"), self.data / "rail" / "summary.json")
+        self.assertEqual(r("/data/live.json"), self.data / "live.json")
         self.assertEqual(r("/rail.html"), self.web / "rail.html")
         self.assertEqual(r("/geo/zones.json"), self.web / "geo" / "zones.json")
 
@@ -376,14 +443,43 @@ class RailPageTest(unittest.TestCase):
         self.assertIn("https://gis.korail.com/korailTalk/entrance?route=main", html)  # 실시간 위치는 코레일 공식 화면으로 연결만 한다
         self.assertIn("OpenStreetMap", html)  # ODbL 출처 표시
         self.assertNotIn("gis.korail.com", script)  # 코레일 화면의 내부 주소를 직접 부르지 않는다
+        self.assertNotIn("gis.korail.com", (self.WEB / "live.js").read_text(encoding="utf-8"))
 
     def test_both_pages_link_to_each_other_and_work_offline(self):
         index = (self.WEB / "index.html").read_text(encoding="utf-8")
         self.assertIn('href="rail.html"', index)
         self.assertIn('href="./"', (self.WEB / "rail.html").read_text(encoding="utf-8"))
         worker = (self.WEB / "sw.js").read_text(encoding="utf-8")
-        for name in ("rail.html", "rail.js", "geo/zones.json", "geo/rail.json", "geo/stations.json"):
+        for name in ("rail.html", "rail.js", "live.js", "geo/zones.json", "geo/rail.json", "geo/stations.json"):
             self.assertIn(name, worker)
+
+    def test_pages_have_elements_for_live_data(self):
+        import re
+
+        index = (self.WEB / "index.html").read_text(encoding="utf-8")
+        rail = (self.WEB / "rail.html").read_text(encoding="utf-8")
+        app = (self.WEB / "app.js").read_text(encoding="utf-8")
+        for name in set(re.findall(r'\$\("([\w-]+)"\)', app)):
+            self.assertIn(f'id="{name}"', index, name)
+        for page in (index, rail):
+            self.assertIn('id="live-status"', page)
+            self.assertIn('id="radar"', page)
+            self.assertLess(page.index("live.js"), max(page.find("app.js"), page.find("rail.js")))  # 실시간 모듈이 먼저 실려야 한다
+        # 코레일 화면은 권한을 줄인 틀 안에 그대로 보여 준다
+        frame = re.search(r"<iframe[^>]+>", rail).group(0)
+        self.assertIn("https://gis.korail.com/korailTalk/entrance?route=main", frame)
+        self.assertIn('sandbox="allow-scripts allow-same-origin"', frame)
+        self.assertIn("title=", frame)
+
+    def test_live_workflow(self):
+        text = (ROOT / ".github" / "workflows" / "live.yml").read_text(encoding="utf-8")
+        self.assertIn('cron: "*/5 * * * *"', text)
+        self.assertIn("python3 -m teukbo.live", text)
+        self.assertIn("secrets.DATA_GO_KR_SERVICE_KEY", text)
+        self.assertIn("--force", text)  # 기록을 쌓지 않는다
+        self.assertNotIn("git push origin main", text)
+        collect = (ROOT / ".github" / "workflows" / "collect.yml").read_text(encoding="utf-8")
+        self.assertIn("TEUKBO_LIVE_URL: https://raw.githubusercontent.com/${{ github.repository }}/live/live.json", collect)
 
     def test_workflow_runs_rail_statistics_without_blocking_weather(self):
         text = (ROOT / ".github" / "workflows" / "collect.yml").read_text(encoding="utf-8")

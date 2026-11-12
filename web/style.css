@@ -567,3 +567,29 @@ table.fit td { vertical-align: top; }
 table.fit thead th { min-width: 3.2em; }
 /* 마우스로 누를 때는 테두리를 그리지 않는다(글쇠로 옮겨 올 때만 표시) */
 .map svg:focus:not(:focus-visible) { outline: none; }
+
+/* ====================================================================
+   실시간 자료 (특보 확인 상태, 지금 날씨, 레이더, 코레일 화면)
+   ==================================================================== */
+.live-status { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 13px; font-weight: 600; }
+.live-status::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.live-status.ok { color: var(--ink-2); }
+.live-status.ok::before { background: var(--series-3); }
+.live-status.late { padding: 8px 10px; border-radius: 8px; background: var(--notice-bg); color: var(--notice-ink); }
+.live-status.late::before { width: 0; height: 0; border-radius: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 9px solid currentColor; }
+
+.now-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.now-tiles .tile { padding: 10px 12px; }
+.now-tiles .tile .value { font-size: 24px; }
+.now-fcst { margin-top: 8px; padding-top: 6px; padding-bottom: 6px; }
+.now-line { margin: 8px 0 0; font-size: 15px; }
+.now-line small { color: var(--ink-3); font-size: 13px; }
+
+.radar-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-bottom: 8px; }
+.radar-time { margin: 0; font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.radar-img { border-radius: 8px; overflow: hidden; background: #fff; border: 1px solid var(--border); }
+.radar-img img { display: block; width: 100%; max-width: 635px; height: auto; margin: 0 auto; }
+
+.korail-frame { display: block; width: 100%; height: min(72vh, 640px); border: 0; background: var(--map-sea); }
+.frame-foot { margin: 0; padding: 10px 14px; border-top: 1px solid var(--hair); color: var(--ink-3); font-size: 13px; }
+

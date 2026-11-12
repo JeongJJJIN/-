@@ -22,7 +22,10 @@
   const LIMIT = box(123.8, 32.4, 132.4, 39.2);
   const JEONNAM = box(126.05, 34.0, 128.3, 35.5);
 
-  const state = { zones: null, rail: null, stations: null, warnings: null, latest: null, summary: null, type: "all", view: { ...FULL }, picked: null, svg: null };
+  const Live = window.TeukboLive;
+  // base = 3시간마다 만들어지는 전국 특보(data/warnings.json), live = 몇 분마다 새로 만들어지는 실시간 자료.
+  // warnings = 지금 화면에 쓰는 것(실시간을 쓸 수 있으면 실시간, 아니면 base).
+  const state = { zones: null, rail: null, stations: null, base: null, live: null, warnings: null, latest: null, summary: null, type: "all", view: { ...FULL }, picked: null, svg: null };
 
   // ------------------------------------------------------------ 도우미
 
@@ -366,6 +369,11 @@
     const poss = possibility.get(code);
     const region = poss ? poss.region : (state.latest ? state.latest.regions.find((r) => (r.zones || []).includes(code)) : null);
     if (poss) panel.append(h("p", { class: "poss" }, h("span", { class: `pill ${poss.grade === "high" ? "p-high" : "p-caution"}`, text: `가능성 ${GRADE_LABEL[poss.grade]}` }), ` ${poss.hazard} ${poss.p}% (향후 ${state.latest.horizon_hours}시간, 계산값)`));
+    const lr = region && state.live && state.live.regions ? state.live.regions[region.id] : null;
+    if (lr && lr.now && Live.fresh(state.live.obs, Math.max(liveStale(), 75))) {
+      panel.append(h("p", { class: "now-line" }, h("b", null, "지금 "), `${Live.num(lr.now.temp)}℃ · 1시간 강수 ${Live.num(lr.now.rain)}mm · 바람 ${Live.num(lr.now.wind)}m/s`,
+        h("small", null, ` (${region.name}, 기상청 실황 ${fmtClock(state.live.obs.base).replace(/^.*일 /, "")} 기준)`)));
+    }
     if (region) panel.append(h("p", null, h("a", { href: `./#${region.id}` }, `${region.name} 특보 가능성 자세히 보기`)));
     const here = state.stations.filter((x) => x.zone === code).map((x) => x.label);
     if (target.kind === "zone" && here.length) panel.append(h("p", { class: "note", text: `이 구역의 역: ${[...new Set(here)].join(", ")}` }));
@@ -376,7 +384,14 @@
   function renderHead() {
     const w = state.warnings, latest = state.latest;
     const when = (w && w.generated_at) || (latest && latest.generated_at);
-    $("updated").textContent = when ? `${fmtClock(when)} 갱신 · ${fmtAgo(when)}` : "";
+    $("updated").textContent = when ? `특보 ${fmtClock(when)} 확인 · ${fmtAgo(when)}` : "";
+    const status = $("live-status");
+    status.hidden = !liveConfig();
+    if (liveConfig()) {
+      status.className = w && w.live ? "live-status ok" : "live-status late";
+      status.textContent = w && w.live ? "특보를 실시간으로 확인하고 있습니다(몇 분 간격)."
+        : `실시간 갱신 지연 — ${state.live && state.live.warnings && state.live.warnings.checked_at ? `마지막 실시간 확인 ${fmtAgo(state.live.warnings.checked_at)}. ` : ""}3시간 주기 자료로 표시 중입니다.`;
+    }
     const alerts = clear($("alerts"));
     const add = (kind, ...content) => alerts.append(h("div", { class: `banner ${kind}`, role: "status" }, h("div", null, ...content)));
     if (latest && latest.demo) add("demo", "데모 화면입니다. 표시된 내용은 실제가 아닌 가상 자료입니다.");
@@ -565,10 +580,37 @@
       getJson("data/latest.json", true).catch(() => null),
       getJson("data/rail.json", true).catch(() => null),
     ]);
-    state.warnings = warnings || state.warnings || { available: false, active: [], preliminary: [], unresolved: [] };
+    state.base = warnings || state.base;
     state.latest = latest || state.latest;
     state.summary = summary || state.summary;
+    derive();
     renderAll();
+    loadLive();
+  }
+
+  const liveConfig = () => (state.latest && state.latest.live) || null;
+  const liveStale = () => (liveConfig() || {}).stale_after_minutes || 30;
+
+  /** 지금 화면에 쓸 특보를 정한다: 기준 시간 안에 확인된 실시간 자료가 있으면 그것, 없으면 3시간 주기 자료. */
+  function derive() {
+    const w = state.live && state.live.warnings;
+    state.warnings = w && Live.fresh(w, liveStale())
+      ? { ...w, generated_at: w.checked_at, live: true }
+      : state.base || { available: false, active: [], preliminary: [], unresolved: [] };
+  }
+
+  async function loadLive() {
+    if (!liveConfig()) return;
+    try { state.live = (await Live.load(liveConfig())) || state.live; } catch (_) { /* 직전 값은 두되, 오래되면 derive 가 쓰지 않는다 */ }
+    refreshLive();
+  }
+
+  function refreshLive() {
+    const before = Live.warningsSignature({ warnings: state.warnings });
+    derive();
+    renderHead();
+    if (Live.warningsSignature({ warnings: state.warnings }) !== before) { renderTypeChips(); paintZones(); renderList(); }
+    renderPicked();
   }
 
   async function start() {
@@ -585,12 +627,19 @@
     $("zoom-all").addEventListener("click", () => setView({ ...FULL }));
     $("zoom-jn").addEventListener("click", () => setView({ ...JEONNAM }));
     await loadData();
+    Live.mountRadar($("radar"));
+    let liveTimer = 0;
+    setInterval(() => {
+      const every = Math.max(30, (liveConfig() || {}).poll_seconds || 120);
+      liveTimer += 60;
+      if (!document.hidden && liveConfig() && liveTimer >= every) { liveTimer = 0; loadLive(); } else refreshLive();
+    }, 60 * 1000);
     let resizeTimer = 0, lastWidth = $("delay").clientWidth;
     window.addEventListener("resize", () => {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => { if ($("delay").clientWidth !== lastWidth) { lastWidth = $("delay").clientWidth; renderDelay(); } }, 200);
     });
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) loadData(); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) loadData(); });  // loadData 가 실시간 자료도 다시 읽는다
     setInterval(() => { if (!document.hidden) loadData(); }, REFRESH_MS);
   }
 

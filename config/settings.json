@@ -41,6 +41,21 @@
     "retries": 3,
     "backoff_seconds": 3
   },
+  "live": {
+    "_doc": [
+      "실시간 자료(teukbo.live): 몇 분마다 특보·예비특보, 지금 날씨(초단기실황), 앞으로 6시간(초단기예보)을 받아 live.json 하나로 묶는다.",
+      "url: 화면이 live.json 을 읽어 올 주소. 비우면 실시간 자료를 쓰지 않는다(배포 때는 워크플로가 TEUKBO_LIVE_URL 로 넣는다).",
+      "obs_refresh_minutes / fcst_refresh_minutes: 실황·초단기예보를 다시 받는 간격(기상청은 10분마다 값을 갱신). 특보는 실행할 때마다 받는다.",
+      "stale_after_minutes: 이보다 오래된 실시간 자료는 화면에서 쓰지 않고 '갱신 지연'으로 알린다. poll_seconds: 화면이 다시 읽는 간격.",
+      "carry_over_minutes: 조회에 실패했을 때 직전 값을 이어서 싣는 한도(확인 시각은 그대로 둔다)."
+    ],
+    "url": "",
+    "obs_refresh_minutes": 10,
+    "fcst_refresh_minutes": 20,
+    "stale_after_minutes": 30,
+    "poll_seconds": 120,
+    "carry_over_minutes": 180
+  },
   "kma_forecast": {
     "_doc": "기상청 단기예보의 범주 문자열을 수치로 바꿀 때 쓰는 대푯값(mm, cm)과 발표 후 조회 대기 시간(분)",
     "pcp_under_1mm": 0.5,

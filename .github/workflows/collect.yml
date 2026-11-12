@@ -40,6 +40,8 @@ jobs:
           # 인증키는 저장소 Settings → Secrets and variables → Actions 에 등록합니다. 없으면 해당 출처만 건너뜁니다.
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
           KMA_APIHUB_KEY: ${{ secrets.KMA_APIHUB_KEY }}
+          # 화면이 실시간 자료(live.yml 이 만드는 live.json)를 읽어 올 주소 — 인증키가 아니다
+          TEUKBO_LIVE_URL: https://raw.githubusercontent.com/${{ github.repository }}/live/live.json
         run: python3 -m teukbo.run
 
       - name: 열차 운행 기록 집계 (전날까지의 코레일 공식 기록 × 특보)

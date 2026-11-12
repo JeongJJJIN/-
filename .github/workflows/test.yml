@@ -22,7 +22,7 @@ jobs:
       - name: 단위 테스트
         run: python3 -m unittest discover -s tests -t . -v
       - name: 화면 스크립트 문법 검사
-        run: node --check web/app.js && node --check web/rail.js && node --check web/sw.js
+        run: node --check web/live.js && node --check web/app.js && node --check web/rail.js && node --check web/sw.js
 
   sources:
     name: 출처 점검 (참고용, 실패해도 무시)

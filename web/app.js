@@ -1,6 +1,7 @@
 /* 기상특보 가능성 — 화면.
  * data/latest.json(전체 지역 요약)을 읽고, 지역을 고르면 data/detail/<지역>.json(모델 비교 자료)을 읽는다.
  * 계산은 모두 서버(GitHub Actions)에서 끝나 있고 여기서는 보여 주기만 한다.
+ * 특보·예비특보와 지금 날씨는 몇 분마다 새로 만들어지는 실시간 자료(live.js)를 덮어 보여 준다.
  */
 (() => {
   "use strict";
@@ -13,7 +14,9 @@
   const REFRESH_MS = 10 * 60 * 1000;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
-  const state = { latest: null, accuracy: null, details: {}, regionId: null, chartPick: {}, open: new Set(), showQuiet: false };
+  const Live = window.TeukboLive;
+  // base = 받아 온 latest.json 그대로, latest = 그 위에 실시간 특보를 덮은 것(화면은 이것을 그린다)
+  const state = { base: null, latest: null, live: null, liveFailed: false, liveSig: "", accuracy: null, details: {}, regionId: null, chartPick: {}, open: new Set(), showQuiet: false };
 
   // ------------------------------------------------------------ DOM 도우미
 
@@ -79,17 +82,51 @@
     main.classList.add("loading");
     try {
       const latest = await getJson("data/latest.json");
-      const changed = !state.latest || state.latest.generated_at !== latest.generated_at;
-      state.latest = latest;
+      const changed = !state.base || state.base.generated_at !== latest.generated_at;
+      state.base = latest;
+      state.latest = Live.applyToLatest(latest, state.live, liveStale());
       if (changed) state.details = {};
       getJson("data/accuracy.json").then((acc) => { state.accuracy = acc; renderAccuracy(); }).catch(() => renderAccuracy());
       if (changed || !$("region").options.length) renderAll();
       else renderUpdated();
+      if (changed) loadLive();
     } catch (error) {
       if (!state.latest) renderLoadError(error);
     } finally {
       main.classList.remove("loading");
     }
+  }
+
+  const liveConfig = () => (state.base && state.base.live) || null;
+  const liveStale = () => (liveConfig() || {}).stale_after_minutes || 30;
+
+  /** 실시간 자료를 다시 읽는다. 특보가 달라졌으면 전체를, 아니면 실시간 부분만 다시 그린다. */
+  async function loadLive() {
+    if (!liveConfig()) return;
+    try {
+      state.live = (await Live.load(liveConfig())) || state.live;
+      state.liveFailed = false;
+    } catch (_) {
+      state.liveFailed = true;  // 직전에 받은 값은 그대로 두되, 오래되면 쓰지 않는다(확인 시각으로 판단)
+    }
+    refreshLive();
+  }
+
+  function refreshLive() {
+    if (!state.base) return;
+    const usable = state.live && Live.fresh(state.live.warnings, liveStale());
+    const sig = usable ? Live.warningsSignature(state.live) : "(3시간 자료)";
+    state.latest = Live.applyToLatest(state.base, state.live, liveStale());
+    if (sig !== state.liveSig) {
+      state.liveSig = sig;
+      renderAlerts();
+      renderOverview();
+      renderRegion();
+    } else {
+      renderOfficial();
+      renderNow();
+    }
+    renderUpdated();
   }
 
   function loadDetail(regionId) {
@@ -130,7 +167,26 @@
 
   function renderUpdated() {
     const latest = state.latest;
-    $("updated").textContent = `${fmtClock(latest.generated_at)} 갱신 · ${fmtAgo(latest.generated_at)}`;
+    $("updated").textContent = `가능성 계산 ${fmtClock(latest.generated_at)} · ${fmtAgo(latest.generated_at)}`;
+    renderLiveStatus();
+  }
+
+  /** 실시간 자료의 상태를 한 줄로: 언제 확인했는지, 늦어지고 있으면 그 사실을. */
+  function renderLiveStatus() {
+    const box = $("live-status");
+    if (!liveConfig()) { box.hidden = true; return; }
+    box.hidden = false;
+    const w = state.live && state.live.warnings;
+    const age = Live.ageMinutes(w);
+    if (w && Live.fresh(w, liveStale())) {
+      box.className = "live-status ok";
+      box.textContent = `특보 실시간 확인 ${fmtClock(w.checked_at).replace(/^.*일 /, "")} · ${fmtAgo(w.checked_at)}`;
+    } else {
+      box.className = "live-status late";
+      box.textContent = Number.isFinite(age)
+        ? `실시간 갱신 지연 — 특보 마지막 확인 ${fmtAgo(w.checked_at)}. 아래 특보는 가능성 계산 시각 기준입니다.`
+        : "실시간 자료를 아직 받지 못했습니다. 아래 특보는 가능성 계산 시각 기준입니다.";
+    }
   }
 
   function renderAlerts() {
@@ -183,7 +239,46 @@
     if (items.length) box.append(h("ul", { class: "official-list" }, items));
     else box.append(h("p", { class: "empty", text: `${r.name}에 발효 중인 특보·예비특보가 없습니다.` }));
     const provider = (state.latest.sources.kma_warnings || {}).provider;
-    box.append(h("p", { class: "official-foot" }, `기상청 발표 기준${provider ? ` (${provider})` : ""}, ${fmtClock(state.latest.generated_at)} 확인 · `, h("a", { href: OFFICIAL_URL, rel: "noopener" }, "날씨누리 특보 현황")));
+    const checked = state.latest.warnings_checked_at || state.latest.generated_at;
+    box.append(h("p", { class: "official-foot" }, `기상청 발표 기준${provider ? ` (${provider})` : ""}, ${fmtClock(checked)} 확인 · `, h("a", { href: OFFICIAL_URL, rel: "noopener" }, "날씨누리 특보 현황")));
+  }
+
+  // ------------------------------------------------------------ 지금 날씨·앞으로 6시간 (실시간 자료)
+
+  function renderNow() {
+    const block = $("now-block"), box = clear($("now")), hint = $("now-hint");
+    if (!liveConfig()) { block.hidden = true; return; }
+    block.hidden = false;
+    const live = state.live, r = region(), lr = live && live.regions ? live.regions[r.id] || {} : {};
+    const obsOk = live && Live.fresh(live.obs, Math.max(liveStale(), 75)) && lr.now;   // 실황은 한 시간 단위 자료 → 기준을 조금 넉넉히
+    const fcstOk = live && Live.fresh(live.fcst, Math.max(liveStale(), 75)) && (lr.fcst || []).length;
+    const clock = (iso) => fmtClock(iso).replace(/^.*일 /, "");
+    hint.textContent = [obsOk ? `기상청 초단기실황 ${clock(live.obs.base)} 기준(${fmtAgo(live.obs.checked_at)} 확인)` : null,
+      fcstOk ? `초단기예보 ${clock(live.fcst.base)} 발표` : null].filter(Boolean).join(" · ");
+    if (!obsOk && !fcstOk) {
+      box.append(h("div", { class: "panel" }, h("p", { class: "empty" }, `${r.name}의 지금 날씨를 불러오지 못했습니다. `, h("a", { href: "https://www.weather.go.kr/w/weather/now.do", rel: "noopener" }, "기상청 날씨누리에서 확인하세요."))));
+      return;
+    }
+    if (obsOk) {
+      const now = lr.now, pty = Live.ptyText(now.pty);
+      const tile = (label, value, unit, sub) => h("div", { class: "tile" }, h("p", { class: "label", text: label }), h("p", { class: "value" }, value, unit ? h("small", null, unit) : null), h("p", { class: "sub", text: sub || "\u00a0" }));
+      box.append(h("div", { class: "tiles now-tiles" },
+        tile("기온", Live.num(now.temp), "℃", now.rh != null ? `습도 ${now.rh}%` : ""),
+        tile("1시간 강수량", now.rain == null ? "–" : Live.num(now.rain), "mm", pty || (now.rain === 0 ? "강수 없음" : "")),
+        tile("풍속", Live.num(now.wind), "m/s", now.wdir != null ? `${Live.windDir(now.wdir)}풍` : "")));
+    }
+    if (fcstOk) {
+      const rows = lr.fcst.slice(0, 6).map((row) => h("tr", null,
+        h("th", { scope: "row", text: `${fmtDayHour(row.t).replace(/^.*\) /, "")}` }),
+        h("td", { text: Live.skyText(row) || "–" }),
+        h("td", { text: row.temp == null ? "–" : `${Live.num(row.temp)}℃` }),
+        h("td", { class: row.rain ? "over" : null, text: row.rain || "–" }),
+        h("td", { text: row.wind == null ? "–" : `${Live.num(row.wind)}m/s` })));
+      box.append(h("div", { class: "panel now-fcst" }, h("div", { class: "table-scroll" }, h("table", { class: "fit" },
+        h("thead", null, h("tr", null, ["시각", "날씨", "기온", "1시간 강수량", "풍속"].map((t) => h("th", { scope: "col", text: t })))),
+        h("tbody", null, rows)))));
+    }
+    box.append(h("p", { class: "note", text: "시·군청 위치의 격자 값입니다. 같은 시·군 안에서도 산지·해안은 다를 수 있습니다." }));
   }
 
   // ------------------------------------------------------------ 특보 가능성 카드
@@ -617,6 +712,7 @@
 
   function renderRegion() {
     renderOfficial();
+    renderNow();
     renderHazards();
     for (const button of document.querySelectorAll(".region-btn")) button.setAttribute("aria-current", "false");
     const index = state.latest.regions.findIndex((r) => r.id === state.regionId);
@@ -665,9 +761,17 @@
     const id = decodeURIComponent(location.hash.slice(1));
     if (state.latest && id !== state.regionId && state.latest.regions.some((r) => r.id === id)) selectRegion(id, false);
   });
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadLatest(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadLatest(); loadLive(); } });
   setInterval(() => { if (!document.hidden) loadLatest(); }, REFRESH_MS);
-  setInterval(() => { if (state.latest) { renderUpdated(); } }, 60 * 1000);
+  // 실시간 자료는 더 자주 읽는다. 읽지 못해도 1분마다 '몇 분 전 확인'과 지연 여부는 다시 판단한다.
+  let liveTimer = 0;
+  setInterval(() => {
+    if (!state.base) return;
+    const every = Math.max(30, (liveConfig() || {}).poll_seconds || 120);
+    liveTimer += 60;
+    if (!document.hidden && liveConfig() && liveTimer >= every) { liveTimer = 0; loadLive(); } else refreshLive();
+  }, 60 * 1000);
+  Live.mountRadar($("radar"));
   let resizeTimer = 0, lastWidth = window.innerWidth;
   window.addEventListener("resize", () => {
     if (window.innerWidth === lastWidth) return;
