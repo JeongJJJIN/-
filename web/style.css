@@ -739,3 +739,4 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
 
 /* hidden 속성은 display 를 지정한 요소에서도 늘 숨긴다 */
 [hidden] { display: none !important; }
+.foot .more { margin: 0 0 6px; font-size: 13px; }

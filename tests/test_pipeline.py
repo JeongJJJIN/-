@@ -695,12 +695,17 @@ class RailPageTest(unittest.TestCase):
         import re
 
         pages = {name: (self.WEB / name).read_text(encoding="utf-8") for name in ("index.html", "rail.html", "analysis.html")}
-        current = {"index.html": "./", "rail.html": "rail.html", "analysis.html": "analysis.html"}
+        current = {"index.html": ["./"], "rail.html": ["rail.html"], "analysis.html": []}  # 참고 자료(분석)는 메뉴에 두지 않는다
         for name, html in pages.items():
             nav = re.search(r'<nav class="tabs".*?</nav>', html, re.S).group(0)
-            self.assertEqual(re.findall(r'<a href="([^"]+)"', nav), ["./", "rail.html", "analysis.html"], name)
-            self.assertEqual(re.findall(r'<a href="([^"]+)" aria-current="page"', nav), [current[name]], name)
-            self.assertEqual(re.findall(r">([^<]+)</a>", nav), ["특보 전망", "지금 지도", "분석"], name)
+            self.assertEqual(re.findall(r'<a href="([^"]+)"', nav), ["./", "rail.html"], name)
+            self.assertEqual(re.findall(r'<a href="([^"]+)" aria-current="page"', nav), current[name], name)
+            self.assertEqual(re.findall(r">([^<]+)</a>", nav), ["특보 전망", "지금 지도"], name)
+        # 본래 목적은 '특보 가능성': 첫 화면에서 공식 특보 바로 다음에 온다(지금 날씨·철도 전망보다 먼저)
+        order = re.findall(r'<h2 id="(h-[a-z]+)"', pages["index.html"])
+        self.assertEqual(order[:3], ["h-official", "h-hazards", "h-now"])
+        self.assertIn('href="analysis.html"', pages["index.html"])  # 지우지는 않고 맨 아래에 작은 링크로
+        for name, html in pages.items():
             self.assertIn("참고용입니다. 공식 특보·예비특보가 우선합니다.", html, name)
             self.assertIn('class="lede"', html, name)  # 화면마다 무엇을 보여 주는지 한 줄
         worker = (self.WEB / "sw.js").read_text(encoding="utf-8")

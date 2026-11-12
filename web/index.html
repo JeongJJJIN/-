@@ -30,7 +30,6 @@
       <nav class="tabs" aria-label="화면 이동">
         <a href="./" aria-current="page">특보 전망</a>
         <a href="rail.html">지금 지도</a>
-        <a href="analysis.html">분석</a>
       </nav>
       <p class="lede">여러 예보를 비교해, 앞으로 48시간 안에 특보가 내려질 가능성과 예상 시간대를 지역별로 계산합니다.</p>
       <div class="region-row">
@@ -51,20 +50,20 @@
       <div id="official" class="panel"></div>
     </section>
 
-    <section class="block" id="now-block" aria-labelledby="h-now" hidden>
-      <div class="block-head">
-        <h2 id="h-now">지금 날씨와 앞으로 6시간</h2>
-        <p class="hint" id="now-hint"></p>
-      </div>
-      <div id="now"></div>
-    </section>
-
     <section class="block" aria-labelledby="h-hazards">
       <div class="block-head">
         <h2 id="h-hazards">향후 <span id="horizon">48</span>시간 특보 가능성</h2>
         <p class="hint" id="models-line"></p>
       </div>
       <div id="hazards"></div>
+    </section>
+
+    <section class="block" id="now-block" aria-labelledby="h-now" hidden>
+      <div class="block-head">
+        <h2 id="h-now">지금 날씨와 앞으로 6시간</h2>
+        <p class="hint" id="now-hint"></p>
+      </div>
+      <div id="now"></div>
     </section>
 
     <section class="block" aria-labelledby="h-outlook">
@@ -92,6 +91,7 @@
   <footer class="foot">
     <div class="wrap">
       <p>이 서비스는 여러 예보를 기계적으로 종합한 <strong>참고 자료</strong>입니다. 실제 특보는 예보관이 종합 판단해 발표하므로 계산 결과와 다를 수 있습니다. 비상근무 등 의사결정은 반드시 <a href="https://www.weather.go.kr/w/special-report/overall.do" rel="noopener">기상청 날씨누리의 공식 특보·예비특보</a>를 확인하세요.</p>
+      <p class="more"><a href="analysis.html">참고 자료: 예측 적중률과 열차 지연 기록</a></p>
       <p class="credits">기상자료: 기상청(공공데이터포털·API허브) · <a href="https://open-meteo.com/" rel="noopener">Weather data by Open-Meteo.com</a> (<a href="https://creativecommons.org/licenses/by/4.0/" rel="noopener">CC BY 4.0</a>, 가공하여 사용)</p>
     </div>
   </footer>
