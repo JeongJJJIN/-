@@ -156,6 +156,21 @@ def collect_rail_rain(cfg: Config, now: datetime, prev: Mapping[str, Any] | None
     return result, new_state
 
 
+def collect_all(cfg: Config, now: datetime, env: Mapping[str, str], prev: Mapping[str, Any] | None, state: Mapping[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """실시간 자료 한 벌: 특보·지금 날씨·앞으로 6시간 + (설정에 따라) 선로 강우. 반환: (live.json 내용, 다음 실행에 넘길 상태 또는 None).
+
+    GitHub 워크플로(main)와 내 컴퓨터용 실행기(teukbo.local)가 같이 쓴다."""
+    doc = collect(cfg, now, env, prev)
+    new_state: dict[str, Any] | None = None
+    if cfg.settings.raw.get("live", {}).get("rail_rain", True):
+        try:
+            doc["rail_rain"], new_state = collect_rail_rain(cfg, now, prev, state)
+        except Exception as e:  # 선로 강우가 실패해도 특보·날씨는 올린다
+            log.exception("선로 강우 계산 실패")
+            doc["rail_rain"] = {"available": False, "checked_at": None, "error": f"{type(e).__name__}: {e}"}
+    return doc, new_state
+
+
 def summary_line(doc: Mapping[str, Any]) -> str:
     def part(label: str, section: Mapping[str, Any], extra: str = "") -> str:
         if not section.get("available"):
@@ -193,20 +208,18 @@ def main(argv: list[str] | None = None) -> int:
             prev = storage.read_json(args.prev)
         except ValueError:
             log.warning("직전 결과 파일을 읽지 못해 처음부터 받습니다: %s", args.prev)
-    doc = collect(cfg, now, os.environ, prev)
-    if args.state_out is not None and cfg.settings.raw.get("live", {}).get("rail_rain", True):
+    if args.state_out is not None:
         state = None
         if args.state is not None:
             try:
                 state = storage.read_json(args.state)
             except ValueError:
                 log.warning("상태 파일을 읽지 못해 레이더를 처음부터 받습니다: %s", args.state)
-        try:
-            doc["rail_rain"], new_state = collect_rail_rain(cfg, now, prev, state)
+        doc, new_state = collect_all(cfg, now, os.environ, prev, state)
+        if new_state is not None:
             storage.write_json(args.state_out, new_state)
-        except Exception as e:  # 선로 강우가 실패해도 특보·날씨는 올린다
-            log.exception("선로 강우 계산 실패")
-            doc["rail_rain"] = {"available": False, "checked_at": None, "error": f"{type(e).__name__}: {e}"}
+    else:
+        doc = collect(cfg, now, os.environ, prev)
     storage.write_json(args.out, doc)
     line = summary_line(doc)
     log.info("실시간 자료: %s", line)

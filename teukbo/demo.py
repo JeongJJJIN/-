@@ -231,9 +231,10 @@ def rail_rain(now: datetime) -> dict:
 def rail_days(cfg: Config, now: datetime, days: int = 30) -> list[dict]:
     """가상의 날짜별 열차 운행 요약(화면 점검용).
 
-    시나리오: 비 온 날(1·8일 전)에는 전라·경전·목포보성선이 호우특보 구간을 지나며 더 늦고,
-    바람 분 날(4일 전)에는 경부선 일부가 강풍주의보 구간을, 눈 온 날(15일 전)에는 중앙·경춘선이 대설주의보 구간을 지나며
-    몇 편은 운행 기록이 없다(운행률이 100% 아래로).
+    시나리오: 비 온 날(1·8·12·19·22·27일 전)에는 전라·경전·목포보성선이 호우특보 구간을 지나며 더 늦고,
+    바람 분 날(4·17일 전)에는 경부선 일부가 강풍주의보 구간을, 눈 온 날(15·24일 전)에는 중앙·경춘선이 대설주의보 구간을 지난다.
+    15일 전에는 몇 편의 운행 기록이 없다(운행률이 100% 아래로).
+    특보일이 모두 10일이라 '모든 특보'는 판정이 나오고, 종류 하나만 고르면 날 수가 모자라 '판단 보류'가 된다 — 두 상태를 다 볼 수 있다.
     """
     from . import rail
 
@@ -252,11 +253,11 @@ def rail_days(cfg: Config, now: datetime, days: int = 30) -> list[dict]:
                 arr = dep + timedelta(minutes=150)
                 warning: dict[str, str] = {}
                 mean, spread = 2.0, 3.0
-                if back in (1, 8) and line in ("전라선", "경전선", "목포보성선"):
+                if back in (1, 8, 12, 19, 22, 27) and line in ("전라선", "경전선", "목포보성선"):
                     warning, mean, spread = {"호우": "경보" if i % 3 == 0 else "주의보"}, 14.0, 9.0
-                elif back == 4 and line == "경부선" and i % 2 == 0:
+                elif back in (4, 17) and line == "경부선" and i % 2 == 0:
                     warning, mean, spread = {"강풍": "주의보"}, 5.0, 4.0
-                elif back == 15 and line in ("중앙선", "경춘선"):
+                elif back in (15, 24) and line in ("중앙선", "경춘선"):
                     warning, mean, spread = {"대설": "주의보"}, 9.0, 7.0
                 run = rail.TrainRun(ymd=ymd, trn_no=f"{first_no + i:05d}", line=line, direction="D", origin=origin, dest=dest, plan_dep=dep, plan_arr=arr)
                 if back == 15 and line in ("중앙선", "경춘선") and i % 6 == 0:

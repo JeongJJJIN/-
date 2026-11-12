@@ -221,69 +221,127 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class AdjustedDifferenceTest(unittest.TestCase):
-    """같은 노선끼리 비교한 지연 차이."""
+class MatchedDifferenceTest(unittest.TestCase):
+    """특보 구간을 지난 열차가 '같은 열차의 평소'보다 얼마나 늦었나 — 날짜 단위의 오차 범위와 판정."""
+
+    FIELDS = ["trn_no", "line", "class", "origin", "dest", "plan_dep", "plan_arr", "dep_delay", "arr_delay", "warnings"]
 
     def setUp(self):
         from teukbo import rail
 
         self.rail = rail
 
-    def test_line_mix_does_not_fake_an_effect(self):
-        # 붐비는 노선(평소 10분)의 열차만 특보 구간을 지났다면, 전체 평균끼리는 차이가 나 보여도 같은 노선끼리는 0이다
-        by_line = {
-            "경부선": {"warn": [10] * 40, "clear": [10, 9, 11] * 40},
-            "전라선": {"warn": [], "clear": [1, 2, 0] * 60},
-        }
-        out = self.rail.adjusted_difference(by_line)
-        self.assertEqual((out["n"], out["lines"], out["diff"]), (40, 1, 0.0))
-        self.assertEqual(out["verdict"], "no_difference")
+    def day(self, date, trains):
+        """trains: [(열차번호, 종착 지연, [특보…])]"""
+        rows = [[f"{no:05d}", "전라선", "KTX", "용산", "여수엑스포", "05:00", "08:00", 0, delay, names] for no, delay, names in trains]
+        return {"date": date, "final": True, "fields": self.FIELDS, "trains": rows, "counts": {"planned": len(rows), "recorded": len(rows), "no_record": 0}, "all": {"n": len(rows)}}
 
-    def test_clear_effect_is_reported_with_interval(self):
-        by_line = {
-            "전라선": {"warn": [12, 15, 18, 14, 16] * 8, "clear": [2, 3, 1, 4, 2] * 30},
-            "경전선": {"warn": [9, 11, 10, 12] * 5, "clear": [3, 2, 4, 3] * 20},
-        }
-        out = self.rail.adjusted_difference(by_line)
-        self.assertEqual((out["n"], out["lines"]), (60, 2))
-        # 전라선 +12.6분(40편), 경전선 +7.5분(20편) → 가중 평균 10.9분
-        self.assertAlmostEqual(out["diff"], 10.9, places=1)
-        self.assertLess(out["low"], out["diff"])
-        self.assertGreater(out["low"], 9.0)
-        self.assertLess(out["high"], 12.5)
-        self.assertEqual(out["verdict"], "later")
+    def test_baseline_is_the_same_trains_mean_on_days_without_warnings(self):
+        # 2026-11-02(월)~05(목)은 같은 요일대, 06(금)·07(토)은 다른 요일대
+        days = [self.day("2026-11-02", [(501, 2, []), (503, 9, [])]), self.day("2026-11-03", [(501, 4, []), (503, -5, [])]), self.day("2026-11-04", [(501, 9, []), (503, 40, ["호우경보"])]),
+                self.day("2026-11-05", [(501, 30, ["호우경보"])]), self.day("2026-11-06", [(501, 20, [])]), self.day("2026-11-07", [(501, 1, [])])]
+        usual = self.rail.train_baselines(days)
+        self.assertEqual(usual("00501", "2026-11-05"), 5.0)  # 월~목의 특보 없던 운행 2·4·9분의 평균. 특보 구간을 지난 30분은 넣지 않는다
+        self.assertEqual(usual("00501", "2026-11-13"), 7.2)  # 금요일 운행이 한 번뿐 → 요일을 가리지 않고 (2+4+9+20+1)/5
+        self.assertIsNone(usual("00503", "2026-11-04"))  # 특보 없던 운행이 두 번뿐이면 평소 값을 내지 않는다
+        self.assertIsNone(usual("00999", "2026-11-04"))
+        days.append(self.day("2026-11-09", [(503, 3, [])]))
+        self.assertEqual(self.rail.train_baselines(days)("00503", "2026-11-04"), 4.0)  # 9, 0(일찍 도착은 0분), 3
+        self.assertEqual([self.rail.weekday_class(d) for d in ("2026-11-02", "2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08")], ["weekday", "weekday", "fri", "sat", "sun"])
 
-    def test_small_samples_are_not_judged(self):
-        out = self.rail.adjusted_difference({"전라선": {"warn": [30, 40, 50], "clear": [1, 2, 3, 2, 1]}})
-        self.assertEqual((out["n"], out["verdict"]), (3, "insufficient"))
-        self.assertGreater(out["diff"], 30)
+    def test_cube_carries_the_excess_of_warned_trains_only(self):
+        days = [self.day(f"2026-11-{d:02d}", [(501, 4, []), (503, 2, [])]) for d in (2, 3, 4)] + [self.day("2026-11-05", [(501, 16, ["호우경보"]), (503, 3, []), (777, 50, ["호우경보"])])]
+        cube = self.rail.build_cube(days)
+        self.assertEqual(cube["schema"], 2)
+        last = cube["days"][-1]["cells"]
+        warned = next(c for c in last if c[2])
+        self.assertEqual((warned[3], warned[14], warned[15]), (2, 1, 12.0))  # 두 편이 지났지만 평소 값이 있는 것은 501뿐: 16 − 4
+        self.assertEqual([(c[14], c[15]) for d in cube["days"] for c in d["cells"] if not c[2]], [(0, 0.0)] * 4)  # 특보 없던 열차에는 계산하지 않는다
+        self.assertEqual(self.rail.cube_matched(cube), {"n": 1, "days": 1, "top_share": 1.0, "diff": 12.0, "verdict": "hold", "reason": "few_trains"})
 
-    def test_small_difference_is_not_called_an_effect(self):
-        by_line = {"경부선": {"warn": [3.5] * 400, "clear": [3.0] * 4000}}  # 0.5분 차이는 뚜렷해도 운영상 의미가 없다
-        self.assertEqual(self.rail.adjusted_difference(by_line)["verdict"], "no_difference")
+    def test_few_days_never_get_a_verdict_however_large_the_gap(self):
+        out = self.rail.matched_difference([(80, 80 * 9.0), (60, 60 * 11.0)])  # 이틀 동안 140편이 평소보다 10분 늦었다
+        self.assertEqual((out["n"], out["days"], out["diff"], out["verdict"], out["reason"]), (140, 2, 9.9, "hold", "few_days"))
+        self.assertLess(out["low"], out["high"])
+        seven = self.rail.matched_difference([(50, 500.0)] * 7)
+        self.assertEqual((seven["verdict"], seven["reason"]), ("hold", "few_days"))
+        self.assertEqual(self.rail.matched_difference([(50, 500.0 + i) for i in range(8)])["verdict"], "later")  # 8일째부터 판정
 
-    def test_earlier_and_empty(self):
-        by_line = {"경부선": {"warn": [1, 0, 2, 1] * 20, "clear": [6, 7, 5, 8] * 50}}
-        self.assertEqual(self.rail.adjusted_difference(by_line)["verdict"], "earlier")
-        self.assertEqual(self.rail.adjusted_difference({}), {"n": 0, "lines": 0, "verdict": "insufficient"})
-        self.assertEqual(self.rail.adjusted_difference({"경부선": {"warn": [5, 6], "clear": []}})["n"], 0)  # 비교할 열차가 없는 노선은 쓰지 않는다
+    def test_one_dominant_day_is_not_judged(self):
+        out = self.rail.matched_difference([(700, 2100.0)] + [(40, 120.0 + i) for i in range(8)])
+        self.assertEqual((out["days"], out["verdict"], out["reason"]), (9, "hold", "one_day"))
+        self.assertGreater(out["top_share"], 0.4)
 
-    def test_early_arrivals_count_as_zero(self):
-        out = self.rail.adjusted_difference({"경부선": {"warn": [-5, -3] * 20, "clear": [0, 0, 0] * 20}})
+    def test_few_trains_and_empty(self):
+        self.assertEqual(self.rail.matched_difference([]), {"n": 0, "days": 0, "verdict": "hold", "reason": "few_trains"})
+        self.assertEqual(self.rail.matched_difference([(0, 0.0), (0, 0.0)])["n"], 0)
+        out = self.rail.matched_difference([(3, 30.0)] * 9)
+        self.assertEqual((out["n"], out["verdict"], out["reason"]), (27, "hold", "few_trains"))
+
+    def test_verdicts_follow_the_interval_that_is_shown(self):
+        m = self.rail.matched_difference
+        later = m([(50, 50 * (3.0 + 0.2 * (i % 3))) for i in range(10)])
+        self.assertEqual(later["verdict"], "later")
+        self.assertGreater(later["low"], 0)
+        earlier = m([(50, 50 * (-2.5 - 0.2 * (i % 3))) for i in range(10)])
+        self.assertEqual(earlier["verdict"], "earlier")
+        within = m([(50, 50 * (0.3 * (-1) ** i)) for i in range(10)])
+        self.assertEqual((within["verdict"], within["diff"]), ("within", 0.0))
+        self.assertTrue(-1.0 <= within["low"] <= within["high"] <= 1.0)
+        # 평균은 0.5분이지만 오차 범위가 1분을 넘나든다 → 어느 쪽이라고도 하지 않는다
+        wide = m([(50, 50 * (0.5 + 2.5 * (-1) ** i)) for i in range(10)])
+        self.assertEqual((wide["verdict"], wide["reason"]), ("hold", "wide"))
+        # 작지만 0보다 확실히 위인 차이는 '더 늦은 경향'으로 적되 숫자를 함께 보여 준다(1분 넘는 범위에 걸칠 때)
+        small = m([(50, 50 * (0.9 + 0.3 * (-1) ** i)) for i in range(10)])
+        self.assertEqual(small["verdict"], "later")
+        self.assertLess(small["diff"], 1.0)
+
+    def test_trains_of_one_day_are_not_counted_as_independent(self):
+        # 하루는 모두 3분 더 늦고 다음 날은 모두 3분 덜 늦다(그날의 사정). 열차 1,000편이지만 근거는 '10일'이다.
+        out = self.rail.matched_difference([(100, 300.0 if i % 2 else -300.0) for i in range(10)])
         self.assertEqual(out["diff"], 0.0)
+        self.assertGreater(out["high"] - out["low"], 4.0)  # 열차를 따로따로 센다면 ±0.2분쯤으로 잘못 좁게 나온다
+        self.assertEqual((out["verdict"], out["reason"]), ("hold", "wide"))
 
-    def test_aggregate_includes_adjusted_by_type(self):
-        fields = ["trn_no", "line", "class", "origin", "dest", "plan_dep", "plan_arr", "dep_delay", "arr_delay", "warnings"]
-        trains = [[f"{i:05d}", "전라선", "KTX", "용산", "여수엑스포", "05:00", "08:00", 0, 14 + i % 3, ["호우경보"]] for i in range(40)]
-        trains += [[f"{100 + i:05d}", "전라선", "KTX", "용산", "여수엑스포", "05:00", "08:00", 0, 2 + i % 3, []] for i in range(80)]
-        trains += [[f"{300 + i:05d}", "경부선", "KTX", "서울", "부산", "05:00", "08:00", 0, 9, []] for i in range(200)]
-        summary = self.rail.aggregate([{"date": "2026-11-11", "fields": fields, "trains": trains, "all": {"n": 320, "mean": 6.0, "late10": 40, "max": 16}}])
-        self.assertEqual(summary["adjusted"]["all"]["verdict"], "later")
-        self.assertEqual(summary["adjusted"]["all"]["diff"], 12.0)
-        self.assertEqual(set(summary["adjusted"]["by_type"]), {"호우"})
-        self.assertEqual(summary["adjusted"]["by_type"]["호우"]["n"], 40)
-        # 전체 평균끼리는 9.0 vs 7.0 가까이로 차이가 작아 보인다 → 같은 노선 비교가 필요한 이유
-        self.assertLess(summary["warned"]["mean"] - summary["clear"]["mean"], 9.0)
+    def _synthetic_days(self, seed, effect=0.0, warned_days=10):
+        """가짜 운행 기록: 열차마다 평소 지연이 다르고, 날마다 모든 열차가 함께 늦어지는 정도가 다르며, 지연은 한쪽으로 긴 꼬리를 가진다."""
+        import random
+        from datetime import date, timedelta
+
+        rng = random.Random(seed)
+        usual = {no: rng.uniform(0.5, 6.0) for no in range(60)}
+        start, total = date(2026, 9, 1), 40
+        fake = set(rng.sample(range(total), warned_days))
+        days = []
+        for i in range(total):
+            shift = rng.gauss(0, 1.2)  # 그날의 사정
+            trains = []
+            for no, base in usual.items():
+                hit = i in fake and no % 2 == 0
+                delay = base + shift + rng.expovariate(1 / 2.5) - 2.5 + (60 if rng.random() < 0.01 else 0) + (effect if hit else 0)
+                trains.append((no, int(round(delay)), ["호우주의보"] if hit else []))
+            days.append(self.day((start + timedelta(days=i)).isoformat(), trains))
+        return days
+
+    def test_fake_warnings_rarely_get_a_verdict(self):
+        """가짜 특보 시험: 아무 영향이 없는 날을 특보일로 꾸몄을 때 '더/덜 늦은 경향'이 거의 나오지 않아야 한다(나와도 5% 안팎)."""
+        verdicts = [self.rail.cube_matched(self.rail.build_cube(self._synthetic_days(seed)))["verdict"] for seed in range(60)]
+        wrong = sum(v in ("later", "earlier") for v in verdicts)
+        self.assertLessEqual(wrong, 4, verdicts)  # 60번 가운데 5% 안팎
+        self.assertGreaterEqual(verdicts.count("hold") + verdicts.count("within"), 56)  # 나머지는 '판단 보류'(범위가 넓음)이거나 '차이 1분 미만'
+
+    def test_a_real_effect_is_found(self):
+        verdicts = [self.rail.cube_matched(self.rail.build_cube(self._synthetic_days(seed, effect=4.0)))["verdict"] for seed in range(20)]
+        self.assertGreaterEqual(verdicts.count("later"), 18, verdicts)
+
+    def test_aggregate_includes_matched_by_type(self):
+        days = self._synthetic_days(1, effect=5.0)
+        summary = self.rail.aggregate(days)
+        self.assertEqual(summary["matched"]["all"]["verdict"], "later")
+        self.assertEqual(summary["matched"]["all"]["days"], 10)
+        self.assertTrue(3.5 <= summary["matched"]["all"]["diff"] <= 5.5, summary["matched"]["all"])  # 5분을 더했지만 일찍 도착을 0분으로 세어 조금 줄어든다
+        self.assertEqual(summary["matched"]["by_type"], {"호우": summary["matched"]["all"]})
+        self.assertNotIn("adjusted", summary)
 
 
 class CubeTest(unittest.TestCase):
@@ -319,8 +377,8 @@ class CubeTest(unittest.TestCase):
         self.assertEqual(total, 40 + 60 + 150 + 35 + 1 + 80 + 150 + 1)  # 지연을 계산하지 못한 열차(601)는 빠진다
         for day in cube["days"]:
             for cell in day["cells"]:
-                self.assertEqual(sum(cell[7:]), cell[3])  # 구간별 열차 수의 합 = 열차 수
-                self.assertEqual(len(cell), 7 + 7)
+                self.assertEqual(sum(cell[7:14]), cell[3])  # 구간별 열차 수의 합 = 열차 수
+                self.assertEqual(len(cell), 7 + 7 + 2)  # … + 평소 값을 낼 수 있었던 열차 수, 평소 대비 합
 
         def find(line, cls, names):
             return next(c for c in cube["days"][1]["cells"] if cube["lines"][c[0]] == line and cube["classes"][c[1]] == cls and sorted(cube["warnings"][i] for i in c[2]) == sorted(names))
@@ -328,11 +386,11 @@ class CubeTest(unittest.TestCase):
         rain = find("전라선", "KTX", ["호우경보"])
         delays = [12 + i % 7 for i in range(40)]
         self.assertEqual(rain[3:7], [40, sum(delays), sum(d * d for d in delays), 18])
-        self.assertEqual(rain[7:], [0, 0, 0, 40, 0, 0, 0])  # 12~18분 → 모두 10~19분 구간
+        self.assertEqual(rain[7:14], [0, 0, 0, 40, 0, 0, 0])  # 12~18분 → 모두 10~19분 구간
         both = find("경전선", "무궁화·누리로", ["호우경보", "강풍주의보"])
         self.assertEqual(both[3:8], [1, 0, 0, 0, 1])  # 조착(-4분)은 0분으로
         late = next(c for c in cube["days"][0]["cells"] if cube["lines"][c[0]] == "중앙선")
-        self.assertEqual(late[7:], [0, 0, 0, 0, 0, 0, 1])  # 75분 → 60분 이상
+        self.assertEqual(late[7:14], [0, 0, 0, 0, 0, 0, 1])  # 75분 → 60분 이상
 
     def test_browser_calculation_matches_server(self):
         """화면의 다시 세기(analysis-core.js)가 서버의 집계·판정과 같은 값을 낸다."""
@@ -353,8 +411,8 @@ class CubeTest(unittest.TestCase):
             global.window = {};
             eval(fs.readFileSync(process.argv[1], 'utf8'));
             const C = window.TeukboAnalysisCore, cube = JSON.parse(process.argv[2]);
-            const pick = (r) => ({ from: r.from, to: r.to, all: C.stats(r.all), warn: C.stats(r.warn), clear: C.stats(r.clear), adjusted: r.adjusted, planned: r.planned, noRecord: r.noRecord,
-              names: Object.fromEntries([...r.byName].map(([k, v]) => [k, C.stats(v)])), lines: Object.fromEntries([...r.byLine].map(([k, v]) => [k, [v.warn.n, v.clear.n]])), days: r.days.map((d) => [d.date, d.all.n, d.warn.n]) });
+            const pick = (r) => ({ from: r.from, to: r.to, all: C.stats(r.all), warn: C.stats(r.warn), clear: C.stats(r.clear), matched: r.matched, warnDays: r.warnDays, planned: r.planned, noRecord: r.noRecord,
+              names: Object.fromEntries([...r.byName].map(([k, v]) => [k, C.stats(v.acc)])), lines: Object.fromEntries([...r.byLine].map(([k, v]) => [k, [v.warn.n, v.clear.n]])), days: r.days.map((d) => [d.date, d.all.n, d.warn.n]) });
             const f = (over) => ({ period: 'all', from: null, to: null, type: 'all', line: 'all', cls: 'all', ...over });
             console.log(JSON.stringify({ all: pick(C.compute(cube, f({}))), rain: pick(C.compute(cube, f({ type: '호우' }))), line: pick(C.compute(cube, f({ line: '경부선', cls: 'KTX' }))),
               one: pick(C.compute(cube, f({ period: 'custom', from: '2026-11-11', to: '2026-11-11' }))), week: pick(C.compute(cube, f({ period: '7' }))), swapped: pick(C.compute(cube, f({ period: 'custom', from: '2026-11-11', to: '2026-11-10' }))) }));
@@ -370,8 +428,9 @@ class CubeTest(unittest.TestCase):
         self.assertAlmostEqual(everything["clear"]["mean"], summary["clear"]["mean"], delta=0.05)
         self.assertEqual(everything["warn"]["late10"], summary["warned"]["late10"])
         self.assertEqual(everything["clear"]["late5"], summary["clear"]["late5"])
-        self.assertEqual(everything["adjusted"], summary["adjusted"]["all"])  # 같은 노선 대비 차이·95% 구간·판정까지
-        self.assertEqual(out["rain"]["adjusted"], summary["adjusted"]["by_type"]["호우"])
+        self.assertEqual(everything["matched"], summary["matched"]["all"])  # 평소 대비 판정(이 자료는 이틀뿐이라 평소 값이 없다 → 판단 보류)
+        self.assertEqual(out["rain"]["matched"], summary["matched"]["by_type"]["호우"])
+        self.assertEqual((everything["warnDays"], out["rain"]["warnDays"]), (1, 1))
         for name, stat in summary["by_warning"].items():
             self.assertEqual(everything["names"][name]["n"], stat["n"], name)
             self.assertAlmostEqual(everything["names"][name]["mean"], stat["mean"], delta=0.05)
@@ -382,11 +441,80 @@ class CubeTest(unittest.TestCase):
         self.assertEqual(sorted(out["rain"]["names"]), ["호우경보"])
         # 노선·열차 종류를 고르면 그것만
         self.assertEqual((out["line"]["all"]["n"], out["line"]["lines"]), (300, {"경부선": [0, 300]}))
-        self.assertEqual(out["line"]["adjusted"]["verdict"], "insufficient")
+        self.assertEqual((out["line"]["matched"]["verdict"], out["line"]["warnDays"]), ("hold", 0))
         # 기간
         self.assertEqual((out["one"]["from"], out["one"]["to"], out["one"]["all"]["n"], out["one"]["planned"]), ("2026-11-11", "2026-11-11", 286, 290))
         self.assertEqual((out["week"]["from"], out["week"]["to"]), ("2026-11-10", "2026-11-11"))  # 자료가 있는 범위 안으로
         self.assertEqual((out["swapped"]["from"], out["swapped"]["to"]), ("2026-11-10", "2026-11-11"))  # 시작·끝을 거꾸로 넣어도
+
+
+    def test_browser_verdict_matches_server_under_filters(self):
+        """평소 대비 판정: 화면(analysis-core.js)과 서버(matched_difference)가 조건별로 같은 값을 낸다."""
+        import json
+        import random
+        import shutil
+        import subprocess
+        from datetime import date, timedelta
+        from pathlib import Path
+
+        from teukbo import rail
+
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node 가 없습니다")
+        rng = random.Random(3)
+        lines = [("전라선", "KTX", 0), ("경부선", "KTX", 100), ("경전선", "무궁화·누리로", 200)]
+        plan = {3: {"전라선": "호우주의보"}, 5: {"전라선": "호우경보", "경전선": "호우주의보"}, 8: {"경부선": "강풍주의보"}, 9: {"전라선": "호우주의보"}, 12: {"경부선": "강풍주의보", "경전선": "강풍주의보"},
+                14: {"전라선": "호우주의보"}, 17: {"전라선": "호우경보"}, 19: {"경전선": "호우주의보"}, 22: {"전라선": "호우주의보"}, 25: {"전라선": "호우주의보", "경부선": "강풍주의보"}, 27: {"전라선": "호우주의보"}}
+        days = []
+        for i in range(30):
+            rows = []
+            for line, cls, first in lines:
+                for k in range(25):
+                    name = plan.get(i, {}).get(line)
+                    rows.append([f"{first + k:05d}", line, cls, "A", "B", "05:00", "08:00", 0, int(rng.expovariate(1 / 3.0)) + (rng.randint(2, 9) if name else 0) - 1, [name] if name else []])
+            days.append({"date": (date(2026, 10, 1) + timedelta(days=i)).isoformat(), "final": True, "fields": self.FIELDS, "trains": rows, "counts": {"planned": 75, "recorded": 75, "no_record": 0}, "all": {"n": 75}})
+        cube, summary = rail.build_cube(days), rail.aggregate(days)
+
+        def server(type_name=None, line=None, first=None, last=None):
+            per_day = []
+            for day in cube["days"]:
+                if (first and day["date"] < first) or (last and day["date"] > last):
+                    continue
+                cells = [c for c in day["cells"] if c[2] and (line is None or cube["lines"][c[0]] == line) and (type_name is None or any(rail.warning_type(cube["warnings"][i]) == type_name for i in c[2]))]
+                per_day.append((sum(c[14] for c in cells), sum(c[15] for c in cells)))
+            return rail.matched_difference(per_day)
+
+        script = """
+            const fs = require('fs');
+            global.window = {};
+            eval(fs.readFileSync(process.argv[1], 'utf8'));
+            const C = window.TeukboAnalysisCore, cube = JSON.parse(process.argv[2]);
+            const f = (over) => ({ period: 'all', from: null, to: null, type: 'all', line: 'all', cls: 'all', ...over });
+            const run = (over) => { const r = C.compute(cube, f(over)); return { matched: r.matched, warnDays: r.warnDays,
+              byName: Object.fromEntries([...r.byName].map(([k, v]) => [k, [v.matched, v.warnDays]])), byLine: Object.fromEntries([...r.byLine].map(([k, v]) => [k, [v.matched, v.warnDays]])) }; };
+            console.log(JSON.stringify({ all: run({}), rain: run({ type: '호우' }), wind: run({ type: '강풍' }), line: run({ line: '전라선' }), rainLine: run({ type: '호우', line: '경전선' }),
+              late: run({ period: 'custom', from: '2026-10-15', to: '2026-10-30' }) }));
+        """
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run([node, "-e", script, str(root / "web" / "analysis-core.js"), json.dumps(cube)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertEqual(out["all"]["matched"], server())
+        self.assertEqual(out["all"]["matched"], summary["matched"]["all"])
+        self.assertEqual(out["all"]["matched"]["verdict"], "later")  # 특보일 11일, 평소보다 5분쯤 늦게 만든 자료
+        self.assertEqual(out["all"]["warnDays"], 11)
+        self.assertEqual(out["rain"]["matched"], server("호우"))
+        self.assertEqual(out["rain"]["matched"], summary["matched"]["by_type"]["호우"])
+        self.assertEqual(out["wind"]["matched"], server("강풍"))
+        self.assertEqual((out["wind"]["matched"]["verdict"], out["wind"]["matched"]["reason"], out["wind"]["warnDays"]), ("hold", "few_days", 3))
+        self.assertEqual(out["line"]["matched"], server(line="전라선"))
+        self.assertEqual(out["rainLine"]["matched"], server("호우", "경전선"))
+        self.assertEqual(out["late"]["matched"], server(first="2026-10-15", last="2026-10-30"))
+        # 구역별 값도 같은 규칙: ④ 특보 종류별, ⑥ 노선별
+        self.assertEqual(out["all"]["byLine"]["전라선"], [server(line="전라선"), 8])
+        self.assertEqual(out["all"]["byLine"]["경부선"][1], 3)
+        self.assertEqual(out["all"]["byName"]["강풍주의보"], [server("강풍"), 3])
 
 
 class UsualTrainsTest(unittest.TestCase):

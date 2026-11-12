@@ -639,8 +639,8 @@ table.fit.lines-table td { white-space: normal; }
 .findings li:first-child { margin-top: 0; }
 .pill.verdict-later { background: var(--z-adv); color: var(--ink); }
 .pill.verdict-earlier { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
-.pill.verdict-no_difference { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
-.pill.verdict-insufficient { background: transparent; color: var(--ink-3); border-color: var(--axis); border-style: dashed; }
+.pill.verdict-within { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
+.pill.verdict-hold { background: transparent; color: var(--ink-2); border-color: var(--axis); border-style: dashed; }
 
 /* 선로 강우 실황 */
 .summary-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -709,14 +709,25 @@ table.fit.rain-table td, table.fit.rain-table tbody th { white-space: nowrap; }
 .rank-track .hbar { display: block; height: 100%; border-radius: 0 4px 4px 0; }
 .hbar.s-main { background: var(--series-1); }
 .hbar.s-base { background: var(--g-low); }
-.rank-row.base .rank-name b, .rank-row.base .rank-value { color: var(--ink-2); }
+.rank-name small.rank-caveat { font-size: 12.5px; }
+/* 가운데 선을 0으로: 오른쪽 = 평소보다 늦음, 왼쪽 = 덜 늦음 */
+.rank-track.diverge { position: relative; background: linear-gradient(var(--axis), var(--axis)) 50% 0 / 1px 100% no-repeat; }
+.rank-track.diverge .hbar { position: absolute; top: 0; }
+.hbar.pos { left: 50%; background: var(--series-1); border-radius: 0 4px 4px 0; }
+.hbar.neg { right: 50%; background: var(--g-low); border-radius: 4px 0 0 4px; }
+.rank-row.soft .hbar, .swatch.hbar-key.soft { opacity: .4; }
+.rank-row.soft .rank-value { color: var(--ink-2); }
+.swatch.hbar-key { width: 18px; height: 10px; border-radius: 2px; }
+.swatch.hbar-key.pos { background: var(--series-1); }
+.swatch.hbar-key.neg { background: var(--g-low); }
+.note.caveat { margin: 0 0 4px; padding: 8px 10px; border: 1px dashed var(--axis); border-radius: 8px; color: var(--ink); }
 @media (min-width: 620px) {
   .rank-row { grid-template-columns: 15em minmax(0, 1fr) 4.6em; grid-template-areas: "name track value"; align-items: center; }
   .rank-value { text-align: right; }
 }
 table.fit.days-table td, table.fit.line-table td { white-space: nowrap; }
 table.fit.days-table tbody th, table.fit.line-table tbody th { white-space: nowrap; text-align: left; }
-table.fit.days-table tbody th small.tag { display: inline; margin-left: 6px; }
+table.fit.days-table tbody th small.tag { display: table; margin: 4px 0 0; }
 .day-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .linklike { text-align: left; white-space: nowrap; }
 .days-table .pill { margin: 0; }

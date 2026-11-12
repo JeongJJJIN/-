@@ -160,7 +160,9 @@ class DemoPipelineTest(unittest.TestCase):
         self.assertEqual(doc["latest_day"]["date"], "2026-11-11")
         self.assertGreater(doc["warned"]["mean"], doc["clear"]["mean"])  # 시나리오: 특보 구간을 지난 열차가 더 늦다
         self.assertEqual(set(doc["by_warning"]), {"호우경보", "호우주의보", "강풍주의보", "대설주의보"})
-        self.assertEqual(doc["adjusted"]["all"]["verdict"], "later")
+        matched = doc["matched"]
+        self.assertEqual((matched["all"]["verdict"], matched["all"]["days"]), ("later", 10))  # 특보일 10일 → 판정
+        self.assertEqual((matched["by_type"]["호우"]["verdict"], matched["by_type"]["호우"]["reason"]), ("hold", "few_days"))  # 종류 하나로는 날 수가 모자라 판단 보류
         self.assertGreater(doc["daily"][-1]["warned"], 0)
         top = doc["latest_day"]["top_delayed"][0]
         self.assertEqual(set(top), {"trn_no", "line", "class", "origin", "dest", "plan_arr", "arr_delay", "warnings"})
@@ -360,7 +362,9 @@ class LocalModeTest(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / "local_keys.txt"
         self.assertEqual(self.local.read_keys(path), {})
         self.local.write_keys(path, {"DATA_GO_KR_SERVICE_KEY": "abc+def==", "KMA_APIHUB_KEY": ""})
-        self.assertEqual(self.local.read_keys(path), {"DATA_GO_KR_SERVICE_KEY": "abc+def==", "KMA_APIHUB_KEY": ""})
+        self.assertEqual(self.local.read_keys(path), {"DATA_GO_KR_SERVICE_KEY": "abc+def==", "KMA_APIHUB_KEY": "", "GITHUB_TRIGGER_TOKEN": ""})
+        self.local.write_keys(path, {"DATA_GO_KR_SERVICE_KEY": "k", "GITHUB_TRIGGER_TOKEN": "github_pat_x"})
+        self.assertEqual(self.local.read_keys(path)["GITHUB_TRIGGER_TOKEN"], "github_pat_x")  # (선택) 공개 사이트 갱신 신호용 토큰도 같은 파일에
         path.write_text("\ufeff# 메모\nDATA_GO_KR_SERVICE_KEY = xyz \nOTHER=1\n", encoding="utf-8")  # 메모장이 붙이는 BOM, 공백
         self.assertEqual(self.local.read_keys(path), {"DATA_GO_KR_SERVICE_KEY": "xyz"})
 
@@ -384,6 +388,169 @@ class LocalModeTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):
             opener.open(f"http://127.0.0.1:{port}/data/secret.txt")
 
+    def test_share_mode_listens_on_the_network(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "web").mkdir()
+        (root / "data").mkdir()
+        server, _ = self.local.start_server(root / "web", root / "data", range(8660, 8670), host="0.0.0.0")
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.assertEqual(server.server_address[0], "0.0.0.0")  # --share 를 준 때만
+
+    # ---- 실시간 자료 (몇 분마다)
+
+    def _cfg(self):
+        from teukbo.config import load_config
+
+        return load_config()
+
+    def test_live_once_writes_live_json_and_keeps_state(self):
+        from unittest import mock
+
+        cfg, data = self._cfg(), Path(tempfile.mkdtemp())
+        calls = []
+
+        def fake(cfg_, now, env, prev, state):
+            calls.append((prev, state, dict(env)))
+            return {"schema": 1, "generated_at": "t", "n": len(calls)}, {"frames": len(calls)}
+
+        with mock.patch.object(self.local.live_mod, "collect_all", fake):
+            first = self.local.live_once(cfg, data, {"DATA_GO_KR_SERVICE_KEY": "k"})
+            second = self.local.live_once(cfg, data, {"DATA_GO_KR_SERVICE_KEY": "k"})
+        self.assertEqual((first["n"], second["n"]), (1, 2))
+        self.assertEqual(calls[0][:2], (None, None))  # 처음에는 직전 값이 없다
+        self.assertEqual(calls[1][:2], ({"schema": 1, "generated_at": "t", "n": 1}, {"frames": 1}))  # 다음에는 직전 결과와 상태를 이어 쓴다
+        self.assertEqual(json.loads((data / "live.json").read_text(encoding="utf-8"))["n"], 2)
+        self.assertEqual(json.loads((data / "live_state.json").read_text(encoding="utf-8")), {"frames": 2})
+        self.assertIsNone(self.local.resolve_path("/data/live_state.json", self.web, self.data))  # 상태 파일은 화면에 내보내지 않는다
+
+    def test_live_signature_changes_only_when_something_notable_changes(self):
+        sig = self.local.live_signature
+        base = {"generated_at": "02:00", "warnings": {"available": True, "active": [{"zone": "L1", "name": "호우주의보"}], "preliminary": []}, "obs": {"available": True, "checked_at": "02:00"},
+                "fcst": {"available": True}, "rail_rain": {"available": True, "lines": [{"name": "전라선", "now": 0}]}}
+        later = json.loads(json.dumps(base))
+        later["generated_at"], later["obs"]["checked_at"] = "02:02", "02:02"
+        self.assertEqual(sig(base), sig(later))  # 시각만 달라진 것은 알리지 않는다
+        lifted = json.loads(json.dumps(base))
+        lifted["warnings"]["active"] = []
+        self.assertNotEqual(sig(base), sig(lifted))  # 특보가 풀리면 알린다
+        wet = json.loads(json.dumps(base))
+        wet["rail_rain"]["lines"][0]["now"] = 5
+        self.assertNotEqual(sig(base), sig(wet))  # 선로에 비가 오기 시작하면 알린다
+
+    def test_latest_points_to_local_live(self):
+        cfg, data = self._cfg(), Path(tempfile.mkdtemp())
+        (data / "latest.json").write_text(json.dumps({"regions": [], "live": {"url": "https://example.invalid/live.json", "stale_after_minutes": 30, "poll_seconds": 120}}), encoding="utf-8")
+        self.local.use_local_live(data, cfg)
+        live = json.loads((data / "latest.json").read_text(encoding="utf-8"))["live"]
+        self.assertEqual(live["url"], "data/live.json")  # 이 컴퓨터가 방금 받은 파일
+        self.assertEqual(live["poll_seconds"], cfg.settings.raw["local"]["poll_seconds"])
+        self.assertLessEqual(cfg.settings.raw["local"]["live_interval_seconds"], 300)
+
+    def test_cube_is_built_from_day_files_when_missing(self):
+        data = Path(tempfile.mkdtemp())
+        self.local.ensure_cube(data)  # 기록이 없으면 아무것도 하지 않는다
+        self.assertFalse((data / "rail" / "cube.json").exists())
+        fields = ["trn_no", "line", "class", "origin", "dest", "plan_dep", "plan_arr", "dep_delay", "arr_delay", "warnings"]
+        day = {"date": "2026-11-11", "final": True, "fields": fields, "trains": [["00501", "전라선", "KTX", "용산", "여수엑스포", "05:10", "08:20", 0, 7, ["호우주의보"]]],
+               "counts": {"planned": 1, "recorded": 1, "no_record": 0}, "all": {"n": 1}}
+        (data / "rail" / "days").mkdir(parents=True)
+        (data / "rail" / "days" / "2026-11-11.json").write_text(json.dumps(day, ensure_ascii=False), encoding="utf-8")
+        self.local.ensure_cube(data)
+        cube = json.loads((data / "rail" / "cube.json").read_text(encoding="utf-8"))
+        self.assertEqual((cube["days"][0]["date"], cube["days"][0]["cells"][0][3], cube["warnings"]), ("2026-11-11", 1, ["호우주의보"]))
+
+    # ---- 공개 사이트 갱신 신호
+
+    def _trigger(self, runs):
+        """runs: 실행 파일 → GitHub 에 기록된 마지막 실행 시각(ISO) 또는 None. 요청은 기록만 한다."""
+        from teukbo.config import load_config
+
+        sent = []
+
+        def request(method, path, token, body=None):
+            sent.append((method, path, token, body))
+            workflow = path.split("/workflows/")[1].split("/")[0]
+            if method == "GET":
+                value = runs.get(workflow)
+                if isinstance(value, int):
+                    return value, {"message": "x"}
+                return 200, {"workflow_runs": [{"created_at": value}] if value else []}
+            runs[workflow] = "dispatched"
+            return 204, None
+
+        settings = load_config().settings.raw["local"]["trigger"]
+        return self.local.Trigger(settings, "github_pat_secret", request), sent
+
+    def test_trigger_slots_match_the_collect_workflow_schedule(self):
+        import re as re_mod
+        from datetime import datetime, timezone
+
+        trigger, _ = self._trigger({})
+        text = (ROOT / ".github" / "workflows" / "collect.yml").read_text(encoding="utf-8")
+        minute, hours = re_mod.search(r'cron: "(\d+) ([\d,]+) \* \* \*"', text).groups()
+        self.assertEqual((trigger.collect_minute, trigger.collect_hours), (int(minute), sorted(int(h) for h in hours.split(","))))  # 설정과 예약이 같아야 한다
+        at = lambda h, m, d=13: datetime(2026, 11, d, h, m, tzinfo=timezone.utc)  # noqa: E731
+        self.assertEqual(trigger.collect_slot(at(17, 24)), at(14, 25))
+        self.assertEqual(trigger.collect_slot(at(17, 25)), at(17, 25))
+        self.assertEqual(trigger.collect_slot(at(1, 0)), at(23, 25, 12))  # 자정을 넘겨도 어제의 마지막 회차
+
+    def test_trigger_sends_only_when_github_has_not_run(self):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 11, 13, 18, 21, tzinfo=timezone.utc)
+        iso = lambda t: t.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+        # GitHub 예약이 돌지 않은 상태: 실시간은 96분 전, 수집은 17:25 회차 이전이 마지막
+        runs = {"live.yml": iso(now - timedelta(minutes=96)), "collect.yml": iso(now - timedelta(minutes=95))}
+        trigger, sent = self._trigger(runs)
+        lines = trigger.tick(now)
+        posts = [(path.split("/workflows/")[1], body) for method, path, _, body in sent if method == "POST"]
+        self.assertEqual(posts, [("live.yml/dispatches", {"ref": "main"}), ("collect.yml/dispatches", {"ref": "main"})])
+        self.assertTrue(all(path.startswith("/repos/teukbo/teukbo.github.io/actions/workflows/") for _, path, _, _ in sent))
+        self.assertEqual(len(lines), 2)
+        self.assertFalse(any("github_pat_secret" in line for line in lines))  # 토큰은 어디에도 찍지 않는다
+        # 바로 다음 확인(30초 뒤)에는 아무 요청도 하지 않는다
+        sent.clear()
+        self.assertEqual(trigger.tick(now + timedelta(seconds=30)), [])
+        self.assertEqual(sent, [])
+        # 5분 뒤: 실시간만 다시 보낸다(수집은 다음 회차까지 기다린다)
+        runs["live.yml"] = iso(now + timedelta(seconds=3))
+        self.assertEqual(trigger.tick(now + timedelta(minutes=5)), [])
+        self.assertEqual([path.split("/workflows/")[1] for method, path, _, _ in sent if method == "POST"], ["live.yml/dispatches"])
+
+    def test_trigger_stays_quiet_when_github_schedule_works(self):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 11, 13, 18, 21, tzinfo=timezone.utc)
+        iso = lambda t: t.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+        runs = {"live.yml": iso(now - timedelta(minutes=2)), "collect.yml": iso(now - timedelta(minutes=50))}  # 둘 다 제때 돌았다
+        trigger, sent = self._trigger(runs)
+        self.assertEqual(trigger.tick(now), [])
+        self.assertEqual([m for m, *_ in sent], ["GET", "GET"])  # 확인만 하고 신호는 보내지 않는다
+
+    def test_trigger_explains_problems_once_in_plain_words(self):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 11, 13, 18, 21, tzinfo=timezone.utc)
+        for status, word in ((401, "토큰"), (403, "권한"), (404, "저장소"), (None, "연결")):
+            def request(method, path, token, body=None, status=status):
+                return status, {"message": "Bad credentials"}
+
+            from teukbo.config import load_config
+
+            trigger = self.local.Trigger(load_config().settings.raw["local"]["trigger"], "github_pat_secret", request)
+            first = trigger.tick(now)
+            self.assertEqual(len(first), 1)
+            self.assertIn(word, first[0])
+            self.assertNotIn("github_pat_secret", first[0])
+            self.assertEqual(trigger.tick(now + timedelta(seconds=30)), [])  # 같은 문제를 되풀이해 적지 않는다
+
+    def test_trigger_rejects_a_malformed_repository_name(self):
+        with self.assertRaises(ValueError):
+            self.local.Trigger({"repository": "teukbo/teukbo.github.io/../x"}, "t")
+        with self.assertRaises(ValueError):
+            self.local.Trigger({"repository": ""}, "t")
+
     def test_gitignore_covers_local_keys(self):
         self.assertIn("/local_keys.txt", (ROOT / ".gitignore").read_text(encoding="utf-8"))
 
@@ -393,6 +560,10 @@ class LocalModeTest(unittest.TestCase):
         self.assertIn(b"\r\n", raw)
         self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
         self.assertIn(b"-m teukbo.local", raw)
+        share = (ROOT / "start-share.bat").read_bytes()
+        share.decode("ascii")
+        self.assertNotIn(b"\n", share.replace(b"\r\n", b""))
+        self.assertIn(b"start.bat\" --share", share)
 
 
 class RepositoryHygieneTest(unittest.TestCase):

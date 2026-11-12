@@ -5,12 +5,13 @@
  *  data/rail-days/<날짜>.json     그날의 열차 목록 — 날짜를 골랐을 때만 읽는다
  *  data/accuracy.json             특보 가능성 예측의 적중률
  * 화면의 모든 숫자는 위 조건으로 같은 묶음에서 다시 센 것이라 서로 맞아떨어진다.
- * 판정(더 늦었음·차이 없음·자료 부족)의 규칙은 서버(teukbo.rail.adjusted_difference)와 같고, 테스트가 두 결과를 대조한다.
+ * 판정(더 늦은 경향·덜 늦은 경향·차이 1분 미만·판단 보류)의 규칙은 서버(teukbo.rail.matched_difference)와 같고, 테스트가 두 결과를 대조한다.
+ * 원칙: 근거(특보일 수·열차 수)를 늘 함께 적고, 날 수가 적으면 평균이나 판정을 내보이지 않는다.
  */
 (() => {
   "use strict";
   const { h, s, $, clear, fmtClock, fmtDate, fmtAgo, num, stationLabel, getJson } = window.TeukboUI;
-  const VERDICT = { later: "더 늦었음", earlier: "덜 늦었음", no_difference: "뚜렷한 차이 없음", insufficient: "자료 부족" };
+  const VERDICT = { later: "더 늦은 경향", earlier: "덜 늦은 경향", within: "차이 1분 미만", hold: "판단 보류" };
   const TYPE_ORDER = ["호우", "태풍", "강풍", "대설", "한파", "폭염", "열대야", "건조", "풍랑", "황사", "폭풍해일"];
   const REFRESH_MS = 30 * 60 * 1000;
   const state = { cube: null, accuracy: null, latest: null, filter: { period: "all", from: null, to: null, type: "all", line: "all", cls: "all" }, day: null, days: {}, query: "", warnedOnly: false, showAll: false };
@@ -28,7 +29,10 @@
   const rate = (planned, noRecord) => (planned ? `${(noRecord > 0 ? Math.min(99.9, Math.round(((planned - noRecord) / planned) * 1000) / 10) : 100).toFixed(1)}%` : "–");
 
   // 다시 세기(조건에 맞춰 묶음 자료를 집계)는 analysis-core.js 가 맡는다 — 화면 없이도 돌려 볼 수 있게 따로 두었다.
-  const { stats, typeOf, MIN_SAMPLE, MIN_EFFECT } = window.TeukboAnalysisCore;
+  const { stats, typeOf, MIN_SAMPLE, MIN_DAYS, NOTE_DAYS, MAX_DAY_SHARE, HIT_SHARE } = window.TeukboAnalysisCore;
+  /** '평소 대비' 평균을 내보여도 되는가 — 특보일이 NOTE_DAYS 일은 되어야 한다(그보다 적으면 날짜별 목록만). */
+  const showable = (m) => Boolean(m && m.n > 0 && m.days >= NOTE_DAYS);
+  const rangeText = (m) => (m.low == null ? "" : `오차 범위 ${smins(m.low)} ~ ${smins(m.high)}분`);
   const compute = () => window.TeukboAnalysisCore.compute(state.cube, state.filter);
 
   // ------------------------------------------------------------ 조건 고르기
@@ -73,28 +77,38 @@
   // ------------------------------------------------------------ 결과 요약
 
   function renderKpis(r) {
-    const box = clear($("kpis")), all = stats(r.all), warn = stats(r.warn), rest = stats(r.clear), f = state.filter;
+    const box = clear($("kpis")), all = stats(r.all), warn = stats(r.warn), rest = stats(r.clear), f = state.filter, m = r.matched;
     const tile = (label, who, value, unit, subs) => put(h("div", { class: "tile" }), h("p", { class: "label" }, label, h("small", null, who)),
       h("p", { class: value == null ? "value pending" : "value" }, value == null ? "–" : value, value != null && unit ? h("small", null, unit) : null), subs.filter(Boolean).map((text) => h("p", { class: "sub", text })));
     const kind = f.type === "all" ? "특보" : `${f.type}특보`, what = `${kind} 구간을 지난 열차`;
     const hit = r.hitDays, calm = r.calmDays, other = all.n - warn.n - rest.n;
     put(box,
-      tile("조건에 맞는 열차", "종착 지연을 계산한 열차", count(all.n), "편", [`${kind} 구간 통과 ${count(warn.n)}편`, `특보 없던 열차 ${count(rest.n)}편`, other > 0 ? `다른 특보만 지난 ${count(other)}편은 비교에서 제외` : null]),
-      tile("운행률", "계획 대비 · 전체 열차 기준", r.planned ? rate(r.planned, r.noRecord).replace("%", "") : null, "%",
-        r.planned ? [`계획 ${count(r.planned)}편 중 ${count(r.planned - r.noRecord)}편 운행`, hit.days ? `${kind} 걸린 날 ${rate(hit.planned, hit.noRecord)}` : `${kind} 걸린 날 없음`] : ["계획 자료 없음"]),
-      tile("평균 종착 지연", what, warn.n ? mins(warn.mean) : null, "분", warn.n ? [`특보 없던 열차 ${rest.n ? `${mins(rest.mean)}분` : "–"}`, `가장 늦은 열차 ${warn.max}분`] : ["해당 열차 없음"]),
-      tile("10분 이상 늦은 비율", what, warn.n ? String(Math.round((warn.late10 / warn.n) * 100)) : null, "%", warn.n ? [`${count(warn.n)}편 중 ${count(warn.late10)}편`, `특보 없던 열차 ${pct(rest.late10, rest.n)}`] : ["해당 열차 없음"]));
+      tile(what, `조건에 맞는 열차 ${count(all.n)}편 가운데`, count(warn.n), "편", [`특보일 ${count(r.warnDays)}일`, `특보 없던 열차 ${count(rest.n)}편`, other > 0 ? `다른 특보만 지난 ${count(other)}편은 비교에서 제외` : null]),
+      tile("평소 대비 지연", "같은 열차의 특보 없던 날 평균과 견줌", showable(m) ? smins(m.diff) : null, "분",
+        !warn.n ? ["해당 열차 없음"] : !showable(m) ? [`특보일이 ${m.days}일뿐이라 평균을 내지 않습니다`, "⑦에서 날짜별로 보세요"]
+          : [`${rangeText(m)} (95%)`, m.days < MIN_DAYS ? `특보일 ${m.days}일 — 참고만 하세요` : `특보일 ${m.days}일 · ${count(m.n)}편 기준`]),
+      tile("평균 종착 지연", "보정 전 단순 평균", warn.n ? mins(warn.mean) : null, "분", warn.n ? [`특보 없던 열차 ${rest.n ? `${mins(rest.mean)}분` : "–"}`, `가장 늦은 열차 ${warn.max}분`] : ["해당 열차 없음"]),
+      tile("10분 이상 늦은 비율", "보정 전", warn.n ? String(Math.round((warn.late10 / warn.n) * 100)) : null, "%", warn.n ? [`${count(warn.n)}편 중 ${count(warn.late10)}편`, `특보 없던 열차 ${pct(rest.late10, rest.n)}`] : ["해당 열차 없음"]));
 
-    const adj = r.adjusted, panel = clear($("verdict"));
-    const interval = adj.diff == null ? "" : `95% 구간 ${smins(adj.low)}~${smins(adj.high)}분`;
-    const sentence = {
-      later: `${what} ${count(adj.n)}편은 같은 노선의 특보 없던 열차보다 평균 ${mins(adj.diff)}분 더 늦게 도착했습니다 (${interval}).`,
-      earlier: `${what} ${count(adj.n)}편은 같은 노선의 특보 없던 열차보다 오히려 평균 ${mins(Math.abs(adj.diff))}분 덜 늦었습니다 (${interval}).`,
-      no_difference: `${what} ${count(adj.n)}편과 같은 노선의 특보 없던 열차 사이에 뚜렷한 지연 차이가 없었습니다 (차이 ${smins(adj.diff)}분, ${interval}).`,
-      insufficient: adj.n ? `${what}가 ${count(adj.n)}편뿐이라 지연 차이를 판단하기에는 자료가 부족합니다${adj.diff == null ? "" : ` (지금까지의 차이 ${smins(adj.diff)}분, ${interval})`}.` : `이 조건에는 ${what}가 없습니다. 기간을 넓히거나 다른 특보·노선을 골라 보세요.`,
-    }[adj.verdict];
-    panel.append(h("p", { class: "verdict-line" }, h("span", { class: `pill verdict-${adj.verdict}`, text: VERDICT[adj.verdict] }), " ", sentence),
-      h("p", { class: "note", text: "같은 노선끼리 비교한 값입니다(노선마다 평소 지연이 달라서). ‘같은 때 있었다’는 사실이며, 특보가 지연의 원인이라는 뜻은 아닙니다." }));
+    // 판정 한 줄: 근거(특보일·열차 수)를 앞에 두고, 날 수가 적으면 판정하지 않는다
+    const panel = clear($("verdict")), head = `특보일 ${count(m.days)}일 · ${count(m.n)}편`;
+    const so_far = showable(m) ? ` 지금까지의 평균 차이는 ${smins(m.diff)}분(${rangeText(m)})이며 참고만 하세요.` : "";
+    const sentence = !warn.n ? `이 조건에는 ${what}가 없습니다. 기간을 넓히거나 다른 특보·노선을 골라 보세요.` : ({
+      later: `${head}: ${what}는 같은 열차의 평소보다 평균 ${mins(m.diff)}분 더 늦은 경향이 있었습니다 (${rangeText(m)}).`,
+      earlier: `${head}: ${what}는 같은 열차의 평소보다 평균 ${mins(Math.abs(m.diff))}분 덜 늦은 경향이 있었습니다 (${rangeText(m)}).`,
+      within: `${head}: ${what}의 지연은 같은 열차의 평소와 1분 미만 차이였습니다 (평균 ${smins(m.diff)}분, ${rangeText(m)}).`,
+      hold: ({
+        few_trains: `평소와 견줄 수 있는 ${what}가 ${count(m.n)}편뿐이라 판단을 미룹니다(${MIN_SAMPLE}편 이상일 때 판정).`,
+        few_days: `특보일이 ${m.days}일뿐이라 판단을 미룹니다(${MIN_DAYS}일 이상 쌓이면 판정). 날 수가 적으면 그날의 사정(사고·요일·시간대)이 그대로 드러납니다.${so_far}`,
+        one_day: `${what}의 ${Math.round((m.top_share || 0) * 100)}%가 하루에 몰려 있어 판단을 미룹니다(하루가 ${Math.round(MAX_DAY_SHARE * 100)}%를 넘지 않을 때 판정). 그날의 사정일 수 있습니다.${so_far}`,
+        wide: `${head}: 평균 차이 ${smins(m.diff)}분, ${rangeText(m)} — 범위가 넓어 늦었다고도 아니라고도 하기 어렵습니다.`,
+      })[m.reason],
+    })[m.verdict];
+    const kinds = [...r.byName.keys()];
+    put(panel, h("p", { class: "verdict-line" }, warn.n ? h("span", { class: `pill verdict-${m.verdict}`, text: VERDICT[m.verdict] }) : null, warn.n ? " " : null, sentence),
+      h("p", { class: "note", text: "‘평소’는 같은 열차번호가 특보 구간을 지나지 않은 날들의 평균 지연입니다(같은 요일대 우선) — 노선·시간대·열차 종류가 저절로 맞춰집니다. 오차 범위는 평균 차이가 있을 법한 범위(95%)이고 날짜를 단위로 계산합니다(같은 날의 열차는 함께 늦어지므로). 개별 열차의 지연 범위가 아닙니다." }),
+      kinds.length && !kinds.some((name) => /경보$/.test(name)) ? h("p", { class: "note", text: `이 조건의 자료에는 주의보만 있습니다(${[...new Set(kinds.map(typeOf))].join("·")}). 경보·태풍처럼 센 특보의 영향은 이 자료로 알 수 없습니다 — ‘차이가 작다’가 ‘날씨의 영향이 없다’는 뜻은 아닙니다.` }) : null,
+      h("p", { class: "note", text: "‘같은 때 있었다’는 사실이며, 특보가 지연의 원인이라는 뜻은 아닙니다. 조건을 여러 가지로 바꿔 보다 보면 우연히 차이가 크게 나오는 조합도 생깁니다." }));
 
     // 운행: 특보가 걸린 날과 그 밖의 날. 계획 대비 운행률과, 평소 같은 요일 대비 열차 수를 나란히 둔다.
     const op = clear($("operation"));
@@ -103,8 +117,11 @@
     const opRow = (label, o) => h("li", { class: "op-row" }, h("div", { class: "op-label" }, h("b", null, label), h("small", null, `${count(o.days)}일`)),
       opCell("운행률", "계획 대비", rate(o.planned, o.noRecord), o.planned ? `${count(o.planned - o.noRecord)} / ${count(o.planned)}편` : "해당 날짜 없음"),
       opCell("운행 열차 수", "평소 같은 요일 대비", versus(o.ran, o.usual), o.usual ? `${count(o.ran)} / 평소 ${count(Math.round(o.usual))}편` : "평소 값 없음", Boolean(o.usual) && o.ran / o.usual < 0.97));
-    put(op, h("h3", { class: "panel-h", text: "운행 — 특보가 걸린 날과 그 밖의 날" }), h("ul", { class: "op-list" }, opRow(`${kind} 걸린 날`, hit), opRow("그 밖의 날", calm)),
-      h("p", { class: "note", text: `‘${kind} 걸린 날’은 조건에 맞는 열차가 ${kind} 구간을 지난 날입니다. 운행은 그날 전체 열차 기준입니다(계획 자료에 노선이 없음). 운휴 열차가 계획 자료에서 빠지는 경우에도 ‘운행 열차 수’가 평소보다 줄어든 것으로 드러납니다. 평소 = 확정된 날들의 같은 요일 중앙값이며, 명절·임시열차가 있는 날은 다를 수 있습니다.` }));
+    const share = Math.round(HIT_SHARE * 100), unverified = r.noRecord === 0;
+    put(op, h("h3", { class: "panel-h", text: "운행 — 특보가 걸린 날과 그 밖의 날" }),
+      unverified ? h("p", { class: "note caveat", text: "이 기간에는 모든 날에 운행계획과 운행 기록의 열차 수가 같았습니다. 운휴가 이 자료에 드러나는지는 아직 확인하지 못했으니, 아래 숫자를 ‘특보 때도 운휴가 없다’는 뜻으로 읽지 마세요. 운휴가 있었던 날의 자료가 쌓이면 확인해 반영합니다." }) : null,
+      h("ul", { class: "op-list" }, opRow(`${kind} 걸린 날`, hit), opRow("그 밖의 날", calm)),
+      h("p", { class: "note", text: `‘${kind} 걸린 날’은 조건에 맞는 열차의 ${share}% 이상이 ${kind} 구간을 지난 날입니다. 운행은 그날 전체 열차 기준입니다(계획 자료에 노선이 없음). 평소 = 확정된 날들의 같은 요일 중앙값이며, 명절·임시열차가 있는 날은 다를 수 있습니다.` }));
   }
 
   // ------------------------------------------------------------ 막대 그래프 (공용)
@@ -185,17 +202,21 @@
   // ------------------------------------------------------------ 특보 종류별 · 지연 분포 · 노선별
 
   function renderByType(r) {
-    const box = clear($("by-type")), rest = stats(r.clear);
-    const rows = [...r.byName].map(([name, acc]) => ({ name, st: stats(acc) })).sort((a, b) => b.st.mean - a.st.mean);
+    const box = clear($("by-type"));
+    const rows = [...r.byName].map(([name, v]) => ({ name, st: stats(v.acc), m: v.matched, days: v.warnDays })).sort((a, b) => b.st.n - a.st.n);  // 열차 수 순(값의 순위로 읽히지 않게)
     if (!rows.length) { box.append(h("p", { class: "empty", text: "이 조건에는 특보 구간을 지난 열차가 없습니다." })); return; }
-    const max = Math.max(rest.mean || 0, ...rows.map((x) => x.st.mean), 1);
-    const line = (name, st, cls, small) => h("li", { class: cls === "s-base" ? "rank-row base" : "rank-row" },
-      h("div", { class: "rank-name" }, h("b", null, name), h("small", null, `${count(st.n)}편 · 10분 이상 ${pct(st.late10, st.n)}${small ? ` · ${small}` : ""}`)),
-      h("div", { class: "rank-value" }, mins(st.mean), h("small", null, "분")),
-      h("div", { class: "rank-track", "aria-hidden": "true" }, h("span", { class: `hbar ${cls}`, style: `width:${Math.max(0.5, (st.mean / max) * 100).toFixed(1)}%` })));
-    put(box, h("p", { class: "rank-cap", text: "평균 종착 지연 — 막대가 길수록 더 늦게 도착했습니다" }),
-      h("ul", { class: "rank" }, rest.n ? line("특보 없던 열차", rest, "s-base", "비교 기준") : null, rows.map((x) => line(x.name, x.st, "s-main", x.st.n < MIN_SAMPLE ? "표본 적음" : null))),
-      h("p", { class: "note", text: "한 열차가 두 가지 특보 구간을 지나면 양쪽에 모두 셉니다. 30편 미만은 우연의 영향이 큽니다." }));
+    const scale = Math.max(2, ...rows.filter((x) => showable(x.m)).map((x) => Math.abs(x.m.diff)));
+    const line = (x) => {
+      const ok = showable(x.m), firm = ok && x.m.days >= MIN_DAYS;
+      const caveat = firm ? rangeText(x.m) : ok ? `특보일 ${MIN_DAYS}일 미만 — 참고만 하세요` : `특보일 ${NOTE_DAYS}일 미만 — 평균을 내지 않습니다(⑦에서 날짜별로)`;
+      return h("li", { class: firm ? "rank-row" : "rank-row soft" },
+        h("div", { class: "rank-name" }, h("b", null, x.name), h("small", null, `${count(x.st.n)}편 · 특보일 ${x.days}일 · 단순 평균 ${mins(x.st.mean)}분`), h("small", { class: "rank-caveat", text: caveat })),
+        h("div", { class: "rank-value" }, ok ? smins(x.m.diff) : "–", ok ? h("small", null, "분") : null),
+        h("div", { class: "rank-track diverge", "aria-hidden": "true" }, ok && Math.abs(x.m.diff) >= 0.05 ? h("span", { class: `hbar ${x.m.diff > 0 ? "pos" : "neg"}`, style: `width:${Math.max(1, (Math.abs(x.m.diff) / scale) * 50).toFixed(1)}%` }) : null));
+    };
+    put(box, h("p", { class: "rank-cap", text: "같은 열차의 평소 대비 평균 차이(분)" }), h("ul", { class: "rank" }, rows.map(line)),
+      h("ul", { class: "legend" }, h("li", null, h("span", { class: "swatch hbar-key pos" }), "평소보다 늦음(오른쪽)"), h("li", null, h("span", { class: "swatch hbar-key neg" }), "평소보다 덜 늦음(왼쪽)"), h("li", null, h("span", { class: "swatch hbar-key pos soft" }), `흐린 막대: 특보일 ${MIN_DAYS}일 미만`)),
+      h("p", { class: "note", text: "특보 종류끼리 순위로 읽지 마세요 — 종류마다 특보일 수·지역·계절이 다릅니다. 열차 수보다 특보일 수가 중요합니다: 날 수가 적으면 그날의 사정이 그대로 드러납니다. 한 열차가 두 가지 특보 구간을 지나면 양쪽에 모두 셉니다." }));
   }
 
   function renderDist(r) {
@@ -211,25 +232,25 @@
       tipRows: (g) => [[series[0].name, warn.n ? `${num(share(warn, g.i), 0)}% (${count(warn.hist[g.i])}편)` : "–", "s-main"], [series[1].name, rest.n ? `${num(share(rest, g.i), 0)}% (${count(rest.hist[g.i])}편)` : "–", "s-base"]],
       tableHead: ["종착 지연", "특보 구간 통과", "특보 없던 열차"],
       tableRow: (g) => [name(g.i), warn.n ? `${num(share(warn, g.i), 0)}% (${count(warn.hist[g.i])}편)` : "–", rest.n ? `${num(share(rest, g.i), 0)}% (${count(rest.hist[g.i])}편)` : "–"],
-    }), h("p", { class: "note", text: "가로축은 종착 지연(분) 구간, 세로축은 그 구간에 든 열차의 비율입니다. 일찍 도착한 열차는 0분으로 셉니다." }));
+    }), h("p", { class: "note", text: "보정 전 비교입니다 — 두 무리는 노선·요일·시간대 구성이 달라, 분포 모양의 큰 차이만 참고하세요. 가로축은 종착 지연(분) 구간, 세로축은 그 구간에 든 열차의 비율이며, 일찍 도착한 열차는 0분으로 셉니다." }));
   }
 
   function renderByLine(r) {
     const box = clear($("by-line"));
-    const rows = [...r.byLine].map(([name, v]) => ({ name, warn: stats(v.warn), clear: stats(v.clear) })).filter((x) => x.warn.n || x.clear.n)
+    const rows = [...r.byLine].map(([name, v]) => ({ name, warn: stats(v.warn), clear: stats(v.clear), m: v.matched, days: v.warnDays })).filter((x) => x.warn.n || x.clear.n)
       .sort((a, b) => b.warn.n - a.warn.n || b.clear.n - a.clear.n);
     if (!rows.length) { box.append(h("p", { class: "empty", text: "이 조건에 맞는 운행 기록이 없습니다." })); return; }
     const row = (x) => {
-      const diff = x.warn.n && x.clear.n ? x.warn.mean - x.clear.mean : null;
+      const ok = showable(x.m);
       return h("tr", null, h("th", { scope: "row" }, h("button", { class: "linklike", type: "button", onclick: () => { state.filter.line = x.name; update(); $("h-filter").scrollIntoView({ behavior: "smooth", block: "start" }); } }, x.name)),
-        h("td", null, x.warn.n ? `${mins(x.warn.mean)}분` : "–", h("small", null, x.warn.n ? `${count(x.warn.n)}편` : "없음")),
-        h("td", null, x.clear.n ? `${mins(x.clear.mean)}분` : "–", h("small", null, x.clear.n ? `${count(x.clear.n)}편` : "없음")),
-        h("td", { class: diff != null && diff >= MIN_EFFECT && x.warn.n >= MIN_SAMPLE ? "over" : null }, diff == null ? "–" : `${smins(diff)}분`, h("small", null, !x.warn.n ? " " : x.warn.n < MIN_SAMPLE ? "표본 적음" : " ")));
+        h("td", null, x.warn.n ? `${count(x.warn.n)}편` : "–", h("small", null, x.warn.n ? `특보일 ${x.days}일` : "없음")),
+        h("td", null, x.warn.n ? `${mins(x.warn.mean)}분` : "–", h("small", null, x.clear.n ? `그 외 ${mins(x.clear.mean)}분` : "그 외 없음")),
+        h("td", null, ok ? `${smins(x.m.diff)}분` : "–", h("small", null, !x.warn.n ? " " : !ok ? "날 수 적음" : x.m.days < MIN_DAYS ? "참고만" : `${smins(x.m.low)}~${smins(x.m.high)}`)));
     };
-    const head = h("thead", null, h("tr", null, h("th", { scope: "col", text: "노선" }), h("th", { scope: "col" }, "특보 구간 통과", h("small", null, "평균 지연")), h("th", { scope: "col" }, "특보 없던 열차", h("small", null, "평균 지연")), h("th", { scope: "col", text: "차이" })));
+    const head = h("thead", null, h("tr", null, h("th", { scope: "col", text: "노선" }), h("th", { scope: "col" }, "특보 구간 통과", h("small", null, "열차 · 특보일")), h("th", { scope: "col" }, "평균 지연", h("small", null, "보정 전")), h("th", { scope: "col" }, "평소 대비", h("small", null, "오차 범위"))));
     put(box, h("div", { class: "table-scroll" }, h("table", { class: "fit line-table" }, head, h("tbody", null, rows.slice(0, 12).map(row)))),
       rows.length > 12 ? h("details", { class: "data-table" }, h("summary", { text: `나머지 ${rows.length - 12}개 노선 보기` }), h("div", { class: "table-scroll" }, h("table", { class: "fit line-table" }, h("tbody", null, rows.slice(12).map(row))))) : null,
-      h("p", { class: "note", text: "노선 이름을 누르면 그 노선만 골라 봅니다. 노선은 열차의 주운행선 기준입니다(전라선 KTX 는 고속선 구간을 달려도 전라선)." }));
+      h("p", { class: "note", text: `노선 이름을 누르면 그 노선만 골라 봅니다. ‘평소 대비’는 같은 열차의 특보 없던 날 평균과 견준 값이고, 특보일이 ${NOTE_DAYS}일 미만이면 내지 않습니다. 노선을 나누면 날 수가 더 적어지므로 ${MIN_DAYS}일 미만은 참고만 하세요. 노선은 열차의 주운행선 기준입니다(전라선 KTX 는 고속선 구간을 달려도 전라선).` }));
   }
 
   // ------------------------------------------------------------ 특보가 있었던 날 · 그날의 열차
@@ -238,16 +259,16 @@
     const box = clear($("days")), rows = r.days.filter((d) => d.warn.n > 0).reverse();
     if (!rows.length) { box.append(h("p", { class: "empty", text: "이 조건에는 특보 구간을 지난 열차가 있던 날이 없습니다." })); return; }
     box.append(h("div", { class: "table-scroll" }, h("table", { class: "fit days-table" },
-      h("thead", null, h("tr", null, h("th", { scope: "col" }, "날짜", h("small", null, "지나간 특보 · 열차 수")), h("th", { scope: "col" }, "평균 지연", h("small", null, "특보 구간 통과")), h("th", { scope: "col" }, "운행률", h("small", null, "계획 대비 · 평소 대비")))),
+      h("thead", null, h("tr", null, h("th", { scope: "col" }, "날짜", h("small", null, "지나간 특보 · 열차 수")), h("th", { scope: "col" }, "평균 지연", h("small", null, "특보 구간 통과 · 평소 대비")), h("th", { scope: "col" }, "운행률", h("small", null, "열차 수 평소 대비")))),
       h("tbody", null, rows.map((d) => {
         const w = stats(d.warn), c = stats(d.clear);
         return h("tr", { class: state.day === d.date ? "picked-row" : null },
           h("th", { scope: "row" }, h("button", { class: "linklike", type: "button", onclick: () => pickDay(d.date) }, fmtDate(d.date)), d.final ? null : h("small", { class: "tag", text: "확정 전" }),
             h("div", { class: "day-pills" }, [...d.names].sort((a, b) => b[1] - a[1]).map(([name, n]) => h("span", { class: `pill ${/경보$/.test(name) ? "warn" : "adv"}`, text: `${name} ${count(n)}편` })))),
-          h("td", null, `${mins(w.mean)}분`, h("small", null, c.n ? `그 외 ${mins(c.mean)}분` : "그 외 없음")),
-          h("td", { class: d.usual && d.recorded / d.usual < 0.97 ? "over" : null }, rate(d.planned, d.noRecord), h("small", null, d.usual ? `평소의 ${versus(d.recorded, d.usual)}` : d.final ? "평소 값 없음" : "확정 뒤 계산"),
+          h("td", null, `${mins(w.mean)}분`, h("small", null, d.pair[0] ? `평소 ${smins(d.pair[1] / d.pair[0])}분` : "평소 값 없음"), h("small", null, c.n ? `그 외 ${mins(c.mean)}분` : "그 외 없음")),
+          h("td", null, rate(d.planned, d.noRecord), h("small", null, d.usual ? `평소의 ${versus(d.recorded, d.usual)}` : d.final ? "평소 값 없음" : "확정 뒤 계산"),
             d.noRecord ? h("small", null, `기록 없음 ${count(d.noRecord)}편`) : null));
-      })))), h("p", { class: "note", text: `${rows.length}일 · 날짜를 누르면 그날의 열차 목록(⑧)을 봅니다. 운행률은 그날 전체 열차 기준입니다. ‘평소의 ○%’는 같은 요일의 평소 운행 열차 수와 견준 값, ‘기록 없음’은 계획에는 있으나 운행 기록이 없는 열차입니다.` }));
+      })))), h("p", { class: "note", text: `${rows.length}일 · 날짜를 누르면 그날의 열차 목록(⑧)을 봅니다. ‘평소 +○분’은 그날 특보 구간을 지난 열차가 같은 열차의 평소보다 얼마나 늦었는지입니다 — 하루치이므로 그날의 다른 사정(사고·혼잡)이 섞여 있습니다. 운행률(계획 대비)은 그날 전체 열차 기준이고, 그 아래 ‘평소의 ○%’는 그날 운행한 열차 수를 같은 요일의 평소 열차 수와 견준 값입니다.` }));
   }
 
   function pickDay(date) {
