@@ -448,6 +448,54 @@ def aggregate(days: Sequence[Mapping[str, Any]], recent_days: int = 14) -> dict[
     }
 
 
+CUBE_BINS = (0, 1, 5, 10, 20, 30, 60)  # 지연 구간의 아래 값(분): 0 / 1~4 / 5~9 / 10~19 / 20~29 / 30~59 / 60 이상
+
+
+def build_cube(days: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """날짜 × 노선 × 열차 종류 × 지나간 특보 단위로 묶은 집계 (data/rail/cube.json) — 분석 화면이 조건을 바꿔 가며 다시 셈하는 바탕.
+
+    cells 한 줄: [노선 번호, 종류 번호, [특보 번호…], 열차 수, 지연 합(분), 지연 제곱합, 최대 지연, 구간별 열차 수 × 7]
+    지연은 조착을 0분으로 본 종착 지연. 지연을 계산하지 못한 열차는 넣지 않는다.
+    제곱합은 화면에서 표준오차(95% 구간)를 구하는 데 쓴다.
+    """
+    lines: list[str] = []
+    classes: list[str] = []
+    warnings: list[str] = []
+
+    def index(table: list[str], name: str) -> int:
+        if name not in table:
+            table.append(name)
+        return table.index(name)
+
+    out_days = []
+    for day in sorted(days, key=lambda d: d["date"]):
+        idx = {name: i for i, name in enumerate(day.get("fields", []))}
+        cells: dict[tuple[int, int, tuple[int, ...]], list[float]] = {}
+        for row in day.get("trains", []):
+            delay = row[idx["arr_delay"]]
+            if delay is None:
+                continue
+            value = max(0, int(delay))
+            key = (index(lines, row[idx["line"]] or "미상"), index(classes, row[idx["class"]] or "기타"),
+                   tuple(sorted(index(warnings, name) for name in (row[idx["warnings"]] or []))))
+            cell = cells.setdefault(key, [0, 0, 0, 0] + [0] * len(CUBE_BINS))
+            cell[0] += 1
+            cell[1] += value
+            cell[2] += value * value
+            cell[3] = max(cell[3], value)
+            cell[4 + max(i for i, lo in enumerate(CUBE_BINS) if value >= lo)] += 1
+        counts = day.get("counts", {})
+        out_days.append({
+            "date": day["date"],
+            "final": bool(day.get("final", True)),
+            "planned": counts.get("planned", 0),
+            "recorded": counts.get("recorded", 0),
+            "no_record": counts.get("no_record", 0),
+            "cells": [[k[0], k[1], list(k[2]), *v] for k, v in sorted(cells.items())],
+        })
+    return {"schema": 1, "bins": list(CUBE_BINS), "lines": lines, "classes": classes, "warnings": warnings, "days": out_days}
+
+
 def window_days(now: datetime, back: int) -> list[str]:
     """어제부터 back 일 전까지의 운행일자(YYYYMMDD), 최근 날짜부터."""
     return [(now - timedelta(days=k)).strftime("%Y%m%d") for k in range(1, back + 1)]

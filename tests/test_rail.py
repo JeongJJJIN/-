@@ -286,6 +286,153 @@ class AdjustedDifferenceTest(unittest.TestCase):
         self.assertLess(summary["warned"]["mean"] - summary["clear"]["mean"], 9.0)
 
 
+class CubeTest(unittest.TestCase):
+    """날짜 × 노선 × 열차 종류 × 특보 묶음(분석 화면의 바탕)과, 화면 쪽 계산의 일치."""
+
+    FIELDS = ["trn_no", "line", "class", "origin", "dest", "plan_dep", "plan_arr", "dep_delay", "arr_delay", "warnings"]
+
+    def days(self):
+        def train(no, line, cls, delay, warnings):
+            return [f"{no:05d}", line, cls, "서울", "부산", "05:00", "08:00", 0, delay, warnings]
+
+        day1 = [train(i, "전라선", "KTX", 12 + i % 7, ["호우경보"]) for i in range(40)]
+        day1 += [train(100 + i, "전라선", "KTX", i % 5, []) for i in range(60)]
+        day1 += [train(300 + i, "경부선", "KTX", 8 + i % 4, []) for i in range(150)]
+        day1 += [train(500 + i, "경부선", "무궁화·누리로", 3 + i % 9, ["강풍주의보"]) for i in range(35)]
+        day1 += [train(600, "경전선", "무궁화·누리로", -4, ["호우경보", "강풍주의보"]), train(601, "경전선", "무궁화·누리로", None, [])]
+        day2 = [train(i, "전라선", "KTX", i % 4, []) for i in range(80)] + [train(300 + i, "경부선", "KTX", 7 + i % 5, []) for i in range(150)] + [train(700, "중앙선", "KTX", 75, [])]
+        return [
+            {"date": "2026-11-11", "final": False, "fields": self.FIELDS, "trains": day1, "counts": {"planned": 290, "recorded": 287, "no_record": 3}, "all": {"n": 286, "mean": 7.0, "late10": 60, "max": 18}},
+            {"date": "2026-11-10", "final": True, "fields": self.FIELDS, "trains": day2, "counts": {"planned": 231, "recorded": 231, "no_record": 0}, "all": {"n": 231, "mean": 6.0, "late10": 30, "max": 75}},
+        ]
+
+    def test_cube_structure(self):
+        from teukbo import rail
+
+        cube = rail.build_cube(self.days())
+        self.assertEqual(cube["bins"], [0, 1, 5, 10, 20, 30, 60])
+        self.assertEqual([d["date"] for d in cube["days"]], ["2026-11-10", "2026-11-11"])  # 날짜순
+        self.assertEqual((cube["days"][1]["planned"], cube["days"][1]["no_record"], cube["days"][1]["final"]), (290, 3, False))
+        self.assertEqual(set(cube["lines"]), {"전라선", "경부선", "경전선", "중앙선"})
+        self.assertEqual(set(cube["warnings"]), {"호우경보", "강풍주의보"})
+        total = sum(cell[3] for day in cube["days"] for cell in day["cells"])
+        self.assertEqual(total, 40 + 60 + 150 + 35 + 1 + 80 + 150 + 1)  # 지연을 계산하지 못한 열차(601)는 빠진다
+        for day in cube["days"]:
+            for cell in day["cells"]:
+                self.assertEqual(sum(cell[7:]), cell[3])  # 구간별 열차 수의 합 = 열차 수
+                self.assertEqual(len(cell), 7 + 7)
+
+        def find(line, cls, names):
+            return next(c for c in cube["days"][1]["cells"] if cube["lines"][c[0]] == line and cube["classes"][c[1]] == cls and sorted(cube["warnings"][i] for i in c[2]) == sorted(names))
+
+        rain = find("전라선", "KTX", ["호우경보"])
+        delays = [12 + i % 7 for i in range(40)]
+        self.assertEqual(rain[3:7], [40, sum(delays), sum(d * d for d in delays), 18])
+        self.assertEqual(rain[7:], [0, 0, 0, 40, 0, 0, 0])  # 12~18분 → 모두 10~19분 구간
+        both = find("경전선", "무궁화·누리로", ["호우경보", "강풍주의보"])
+        self.assertEqual(both[3:8], [1, 0, 0, 0, 1])  # 조착(-4분)은 0분으로
+        late = next(c for c in cube["days"][0]["cells"] if cube["lines"][c[0]] == "중앙선")
+        self.assertEqual(late[7:], [0, 0, 0, 0, 0, 0, 1])  # 75분 → 60분 이상
+
+    def test_browser_calculation_matches_server(self):
+        """화면의 다시 세기(analysis-core.js)가 서버의 집계·판정과 같은 값을 낸다."""
+        import json
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        from teukbo import rail
+
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node 가 없습니다")
+        days = self.days()
+        cube, summary = rail.build_cube(days), rail.aggregate(days)
+        script = """
+            const fs = require('fs');
+            global.window = {};
+            eval(fs.readFileSync(process.argv[1], 'utf8'));
+            const C = window.TeukboAnalysisCore, cube = JSON.parse(process.argv[2]);
+            const pick = (r) => ({ from: r.from, to: r.to, all: C.stats(r.all), warn: C.stats(r.warn), clear: C.stats(r.clear), adjusted: r.adjusted, planned: r.planned, noRecord: r.noRecord,
+              names: Object.fromEntries([...r.byName].map(([k, v]) => [k, C.stats(v)])), lines: Object.fromEntries([...r.byLine].map(([k, v]) => [k, [v.warn.n, v.clear.n]])), days: r.days.map((d) => [d.date, d.all.n, d.warn.n]) });
+            const f = (over) => ({ period: 'all', from: null, to: null, type: 'all', line: 'all', cls: 'all', ...over });
+            console.log(JSON.stringify({ all: pick(C.compute(cube, f({}))), rain: pick(C.compute(cube, f({ type: '호우' }))), line: pick(C.compute(cube, f({ line: '경부선', cls: 'KTX' }))),
+              one: pick(C.compute(cube, f({ period: 'custom', from: '2026-11-11', to: '2026-11-11' }))), week: pick(C.compute(cube, f({ period: '7' }))), swapped: pick(C.compute(cube, f({ period: 'custom', from: '2026-11-11', to: '2026-11-10' }))) }));
+        """
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run([node, "-e", script, str(root / "web" / "analysis-core.js"), json.dumps(cube)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        everything = out["all"]
+        # 전체 조건: 서버의 누적 통계와 같다
+        self.assertEqual((everything["warn"]["n"], everything["clear"]["n"]), (summary["warned"]["n"], summary["clear"]["n"]))
+        self.assertAlmostEqual(everything["warn"]["mean"], summary["warned"]["mean"], delta=0.05)
+        self.assertAlmostEqual(everything["clear"]["mean"], summary["clear"]["mean"], delta=0.05)
+        self.assertEqual(everything["warn"]["late10"], summary["warned"]["late10"])
+        self.assertEqual(everything["clear"]["late5"], summary["clear"]["late5"])
+        self.assertEqual(everything["adjusted"], summary["adjusted"]["all"])  # 같은 노선 대비 차이·95% 구간·판정까지
+        self.assertEqual(out["rain"]["adjusted"], summary["adjusted"]["by_type"]["호우"])
+        for name, stat in summary["by_warning"].items():
+            self.assertEqual(everything["names"][name]["n"], stat["n"], name)
+            self.assertAlmostEqual(everything["names"][name]["mean"], stat["mean"], delta=0.05)
+        self.assertEqual((everything["planned"], everything["noRecord"]), (521, 3))
+        self.assertEqual(everything["days"], [["2026-11-10", 231, 0], ["2026-11-11", 286, 76]])
+        # 특보를 고르면: 다른 종류의 특보만 지난 열차(강풍 35편)는 어느 쪽에도 넣지 않는다
+        self.assertEqual((out["rain"]["warn"]["n"], out["rain"]["clear"]["n"]), (41, summary["clear"]["n"]))
+        self.assertEqual(sorted(out["rain"]["names"]), ["호우경보"])
+        # 노선·열차 종류를 고르면 그것만
+        self.assertEqual((out["line"]["all"]["n"], out["line"]["lines"]), (300, {"경부선": [0, 300]}))
+        self.assertEqual(out["line"]["adjusted"]["verdict"], "insufficient")
+        # 기간
+        self.assertEqual((out["one"]["from"], out["one"]["to"], out["one"]["all"]["n"], out["one"]["planned"]), ("2026-11-11", "2026-11-11", 286, 290))
+        self.assertEqual((out["week"]["from"], out["week"]["to"]), ("2026-11-10", "2026-11-11"))  # 자료가 있는 범위 안으로
+        self.assertEqual((out["swapped"]["from"], out["swapped"]["to"]), ("2026-11-10", "2026-11-11"))  # 시작·끝을 거꾸로 넣어도
+
+
+class UsualTrainsTest(unittest.TestCase):
+    """평소 같은 요일 대비 운행 열차 수 — 운휴로 열차가 계획에서 빠진 날도 드러나야 한다."""
+
+    def run_js(self, cube, expression):
+        import json
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node 가 없습니다")
+        script = "const fs = require('fs'); global.window = {}; eval(fs.readFileSync(process.argv[1], 'utf8')); const C = window.TeukboAnalysisCore, cube = JSON.parse(process.argv[2]);" \
+                 f"console.log(JSON.stringify({expression}));"
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run([node, "-e", script, str(root / "web" / "analysis-core.js"), json.dumps(cube)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def cube(self):
+        def day(date, recorded, final=True, warned=0, planned=None):
+            cells = [[0, 0, [], recorded - warned, 0, 0, 0, recorded - warned, 0, 0, 0, 0, 0, 0]]
+            if warned:
+                cells.append([0, 0, [0], warned, 0, 0, 0, warned, 0, 0, 0, 0, 0, 0])
+            planned = recorded if planned is None else planned
+            return {"date": date, "final": final, "planned": planned, "recorded": recorded, "no_record": planned - recorded, "cells": cells}
+
+        # 2026-10-05 는 월요일. 월요일 다섯 번(한 번은 태풍으로 운휴 — 계획에서도 빠져 계획 대비로는 100%), 화요일 두 번, 확정 전 월요일 한 번
+        return {"schema": 1, "bins": [0, 1, 5, 10, 20, 30, 60], "lines": ["경부선"], "classes": ["KTX"], "warnings": ["태풍경보"], "days": [
+            day("2026-10-05", 100), day("2026-10-06", 90), day("2026-10-12", 102), day("2026-10-13", 90),
+            day("2026-10-19", 60, warned=40), day("2026-10-26", 100), day("2026-11-02", 98, planned=100), day("2026-11-09", 40, final=False)]}
+
+    def test_usual_is_same_weekday_median_of_final_days(self):
+        out = self.run_js(self.cube(), "(() => { const u = C.usualRuns(cube); return ['2026-10-19', '2026-10-06', '2026-11-16'].map(u); })()")
+        self.assertEqual(out, [100, None, 100])  # 월요일 [60, 98, 100, 100, 102] 의 중앙값 · 화요일은 이틀뿐이라 없음 · 확정 전(40)은 넣지 않음
+
+    def test_hit_days_show_fewer_trains_even_when_plan_rate_is_full(self):
+        out = self.run_js(self.cube(), "(() => { const r = C.compute(cube, { period: 'all', type: 'all', line: 'all', cls: 'all' });"
+                                       " return { hit: r.hitDays, calm: r.calmDays, days: r.days.map((d) => [d.date, d.recorded, d.usual]) }; })()")
+        self.assertEqual(out["hit"], {"days": 1, "planned": 60, "noRecord": 0, "ran": 60, "usual": 100})  # 계획 대비 100% 이지만 평소의 60%
+        self.assertEqual(out["calm"], {"days": 7, "planned": 622, "noRecord": 2, "ran": 400, "usual": 400})  # 평소 값이 있는 날(확정된 월요일 네 번: 100+102+100+98)만 견준다
+        self.assertEqual(out["days"][-1], ["2026-11-09", 40, None])  # 확정 전인 날은 평소와 견주지 않는다
+
+
 class RailRunTest(unittest.TestCase):
     """실행부: 받아 온 자료로 날짜별 파일·이력 보관·누적 통계를 만든다(네트워크는 가짜)."""
 
@@ -366,6 +513,9 @@ class RailRunTest(unittest.TestCase):
         self.assertEqual((summary["warned"]["n"], summary["warned"]["mean"], summary["clear"]["n"], summary["clear"]["mean"]), (1, 15.0, 1, 0.0))
         self.assertEqual(summary["latest_day"]["date"], "2026-11-11")
         self.assertEqual(summary["latest_day"]["top_delayed"][0]["trn_no"], "00501")
+        cube = json.loads((self.dir / "rail" / "cube.json").read_text(encoding="utf-8"))  # 분석 화면이 쓰는 묶음
+        self.assertEqual([d["date"] for d in cube["days"]], ["2026-11-10", "2026-11-11"])
+        self.assertEqual(sum(c[3] for d in cube["days"] for c in d["cells"]), 2)
 
     def test_events_are_cached_and_past_days_not_refetched(self):
         import json

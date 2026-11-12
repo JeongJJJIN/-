@@ -58,6 +58,17 @@ def build_site(data_dir: Path, out_dir: Path, web_dir: Path | None = None) -> st
             shutil.copy2(data_dir / name, site_data / name)
     if (data_dir / "rail" / "summary.json").is_file():
         shutil.copy2(data_dir / "rail" / "summary.json", site_data / "rail.json")
+    # 분석 화면(과거 자료 탐색): 묶음 집계와, 날짜를 골랐을 때 읽는 그날의 열차 목록
+    days_dir = data_dir / "rail" / "days"
+    if (data_dir / "rail" / "cube.json").is_file():
+        shutil.copy2(data_dir / "rail" / "cube.json", site_data / "rail-cube.json")
+    elif days_dir.is_dir() and any(days_dir.glob("*.json")):
+        # 묶음이 아직 없으면(수집이 중간에 멈춘 회차 등) 쌓여 있는 날짜별 기록으로 여기서 만든다 — 분석 화면이 비지 않게
+        from . import rail, rail_run, storage
+
+        storage.write_json(site_data / "rail-cube.json", rail.build_cube(rail_run.load_days(data_dir)))
+    if days_dir.is_dir():
+        shutil.copytree(days_dir, site_data / "rail-days")
     if (data_dir / "detail").is_dir():
         shutil.copytree(data_dir / "detail", site_data / "detail")
     return build

@@ -228,8 +228,13 @@ def rail_rain(now: datetime) -> dict:
     return {**radar.build_result(samples, frames, latest, now), "demo": True}
 
 
-def rail_summary(cfg: Config, now: datetime, days: int = 14) -> dict:
-    """가상의 열차 지연 통계(화면 점검용). 비가 온 날에는 전라·경전선 열차가 특보 구간을 지나며 더 늦는다."""
+def rail_days(cfg: Config, now: datetime, days: int = 30) -> list[dict]:
+    """가상의 날짜별 열차 운행 요약(화면 점검용).
+
+    시나리오: 비 온 날(1·8일 전)에는 전라·경전·목포보성선이 호우특보 구간을 지나며 더 늦고,
+    바람 분 날(4일 전)에는 경부선 일부가 강풍주의보 구간을, 눈 온 날(15일 전)에는 중앙·경춘선이 대설주의보 구간을 지나며
+    몇 편은 운행 기록이 없다(운행률이 100% 아래로).
+    """
     from . import rail
 
     settings = cfg.settings.raw.get("rail", {})
@@ -240,20 +245,38 @@ def rail_summary(cfg: Config, now: datetime, days: int = 14) -> dict:
         day = now - timedelta(days=back)
         ymd = day.strftime("%Y%m%d")
         rng = random.Random(f"rail|{ymd}")
-        rainy = back in (1, 8)
         runs = []
         for line, first_no, count, origin, dest in lines:
             for i in range(count):
                 dep = day.replace(hour=5, minute=0) + timedelta(minutes=int(i * 1000 / count))
                 arr = dep + timedelta(minutes=150)
-                warned = rainy and line in ("전라선", "경전선", "목포보성선")
-                delay = max(-3, int(rng.gauss(14 if warned else 2, 9 if warned else 3)))
+                warning: dict[str, str] = {}
+                mean, spread = 2.0, 3.0
+                if back in (1, 8) and line in ("전라선", "경전선", "목포보성선"):
+                    warning, mean, spread = {"호우": "경보" if i % 3 == 0 else "주의보"}, 14.0, 9.0
+                elif back == 4 and line == "경부선" and i % 2 == 0:
+                    warning, mean, spread = {"강풍": "주의보"}, 5.0, 4.0
+                elif back == 15 and line in ("중앙선", "경춘선"):
+                    warning, mean, spread = {"대설": "주의보"}, 9.0, 7.0
                 run = rail.TrainRun(ymd=ymd, trn_no=f"{first_no + i:05d}", line=line, direction="D", origin=origin, dest=dest, plan_dep=dep, plan_arr=arr)
+                if back == 15 and line in ("중앙선", "경춘선") and i % 6 == 0:
+                    runs.append(run)  # 계획은 있으나 운행 기록이 없는 열차
+                    continue
+                delay = max(-3, int(rng.gauss(mean, spread)))
                 run.stops = [rail.Stop("a", origin, rail.STOP_ORIGIN, None, dep), rail.Stop("b", dest, rail.STOP_TERMINUS, arr + timedelta(minutes=delay), None)]
-                if warned:
-                    run.warnings = {"호우": "경보" if i % 3 == 0 else "주의보"}
+                run.warnings = warning
                 runs.append(run)
-        summaries.append(rail.summarize_day(ymd, runs, settings.get("train_classes", []), now))
+        summary = rail.summarize_day(ymd, runs, settings.get("train_classes", []), now)
+        summary["final"] = back >= 2
+        summaries.append(summary)
+    return summaries
+
+
+def rail_summary(cfg: Config, now: datetime, summaries: list[dict]) -> dict:
+    """가상의 날짜별 요약으로 만든 누적 통계."""
+    from . import rail
+
+    settings = cfg.settings.raw.get("rail", {})
     summary = rail.aggregate(summaries)
     latest = summaries[-1]
     idx = {name: i for i, name in enumerate(latest["fields"])}

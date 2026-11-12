@@ -199,7 +199,15 @@ def run_demo(cfg: Config, now: datetime, data_dir: Path, days: int) -> int:
             storage.write_json(data_dir / "warnings.json", storage.build_national(national, cfg, t, sources["kma_warnings"]))
             storage.write_json(data_dir / "live.json", demo_mod.live_doc(cfg, t, forecasts, official, national))
     storage.write_json(data_dir / "accuracy.json", accuracy_mod.compute_accuracy(history_dir, cfg, now), pretty=True)
-    storage.write_json(data_dir / "rail" / "summary.json", demo_mod.rail_summary(cfg, now))
+    from . import rail as rail_mod
+
+    rail_days = demo_mod.rail_days(cfg, now)
+    for old_file in (data_dir / "rail" / "days").glob("*.json") if (data_dir / "rail" / "days").is_dir() else []:
+        old_file.unlink()
+    for day in rail_days:
+        storage.write_json(data_dir / "rail" / "days" / f"{day['date']}.json", day)
+    storage.write_json(data_dir / "rail" / "summary.json", demo_mod.rail_summary(cfg, now, rail_days))
+    storage.write_json(data_dir / "rail" / "cube.json", {**rail_mod.build_cube(rail_days), "demo": True})
     log.info("데모 자료 생성 완료: %s (실제 예보가 아닙니다)", data_dir)
     return EXIT_OK
 

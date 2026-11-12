@@ -29,24 +29,80 @@
         <a href="rail.html">지금 지도</a>
         <a href="analysis.html" aria-current="page">분석</a>
       </nav>
-      <p class="lede">쌓인 자료로 답합니다 — 특보가 내려진 구간을 지난 열차는 얼마나 늦었나, 이 서비스의 예측은 얼마나 맞았나.</p>
+      <p class="lede">지난 운행 기록에서 찾아봅니다 — 기간·특보·노선을 고르면, 그때 열차가 얼마나 늦었고 얼마나 운행했는지 숫자와 그래프로 보여 줍니다.</p>
     </div>
   </header>
 
   <main class="wrap" id="main">
     <div id="alerts"></div>
 
-    <section class="block" aria-labelledby="h-summary">
-      <h2 id="h-summary">핵심 요약</h2>
-      <div class="panel" id="summary"></div>
+    <section class="block first" aria-labelledby="h-filter" data-needs-cube>
+      <h2 id="h-filter">① 조건 고르기</h2>
+      <div class="panel filters" id="filters">
+        <div class="filter-row">
+          <span class="filter-label" id="l-period">기간</span>
+          <div class="chips" id="f-period" role="group" aria-labelledby="l-period"></div>
+        </div>
+        <div class="filter-row custom" id="f-custom" hidden>
+          <span class="filter-label">날짜</span>
+          <label>시작 <input type="date" id="f-from"></label>
+          <label>끝 <input type="date" id="f-to"></label>
+        </div>
+        <div class="filter-row">
+          <span class="filter-label" id="l-type">특보</span>
+          <div class="chips" id="f-type" role="group" aria-labelledby="l-type"></div>
+        </div>
+        <div class="filter-row">
+          <label class="filter-label" for="f-line">노선</label>
+          <div class="select-wrap"><select id="f-line"></select></div>
+        </div>
+        <div class="filter-row">
+          <label class="filter-label" for="f-class">열차</label>
+          <div class="select-wrap"><select id="f-class"></select></div>
+        </div>
+        <div class="filter-foot">
+          <p class="filter-scope" id="scope" aria-live="polite"></p>
+          <button type="button" class="chip" id="reset">조건 초기화</button>
+        </div>
+      </div>
+      <p class="hint flow">아래의 모든 숫자와 그래프는 이 조건으로 다시 계산됩니다: ② 결과 요약 → ③ 날짜별 → ④ 특보 종류별 → ⑤ 지연 분포 → ⑥ 노선별 → ⑦ 특보가 있었던 날 → ⑧ 그날의 열차</p>
     </section>
 
-    <section class="block" aria-labelledby="h-delay">
-      <div class="block-head">
-        <h2 id="h-delay">열차 지연 × 특보</h2>
-        <p class="hint" id="delay-period"></p>
-      </div>
-      <div id="delay"></div>
+    <section class="block" aria-labelledby="h-kpi">
+      <div class="block-head"><h2 id="h-kpi">② 결과 요약</h2><p class="hint" id="scope-kpi"></p></div>
+      <div class="tiles kpi-tiles" id="kpis"></div>
+      <div class="panel verdict" id="verdict"></div>
+      <div class="panel operation" id="operation"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-daily" data-needs-cube>
+      <div class="block-head"><h2 id="h-daily">③ 날짜별 평균 지연</h2><p class="hint" id="scope-daily"></p></div>
+      <div class="panel" id="daily"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-type" data-needs-cube>
+      <div class="block-head"><h2 id="h-type">④ 특보 종류별 지연</h2><p class="hint" id="scope-type"></p></div>
+      <div class="panel" id="by-type"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-dist" data-needs-cube>
+      <div class="block-head"><h2 id="h-dist">⑤ 지연 분포</h2><p class="hint" id="scope-dist"></p></div>
+      <div class="panel" id="dist"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-line" data-needs-cube>
+      <div class="block-head"><h2 id="h-line">⑥ 노선별 비교</h2><p class="hint" id="scope-line"></p></div>
+      <div class="panel" id="by-line"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-days" data-needs-cube>
+      <div class="block-head"><h2 id="h-days">⑦ 특보가 있었던 날</h2><p class="hint" id="scope-days"></p></div>
+      <div class="panel" id="days"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-day" data-needs-cube>
+      <div class="block-head"><h2 id="h-day">⑧ 그날의 열차</h2><p class="hint" id="day-hint"></p></div>
+      <div id="day-detail"></div>
     </section>
 
     <section class="block" aria-labelledby="h-accuracy">
@@ -67,6 +123,10 @@
               <li><b>종착 지연</b>: 종착역 실제 도착 시각 − 계획 도착 시각. 일찍 도착한 열차는 0분으로 셉니다. 역별 계획 시각은 공개되지 않아 종착역 기준만 계산합니다.</li>
               <li><b>특보 구간 통과</b>: 열차가 정차한 역이 속한 특보구역에, 그 역을 지난 시각에 특보가 발효 중이었던 경우입니다. 정차하지 않고 지나간 구역은 반영되지 않습니다.</li>
               <li><b>같은 노선끼리 비교</b>: 노선마다 평소 지연이 다르므로, 노선별로 ‘특보 구간을 지난 열차 − 지나지 않은 열차’의 평균 차이를 구해 열차 수로 가중 평균합니다. 95% 구간은 정규 근사입니다.</li>
+              <li><b>운행률(계획 대비)</b>: 운행계획에 있는 열차 가운데 운행 기록이 있는 열차의 비율입니다. 계획 자료에는 노선이 없어 전체 열차 기준으로만 냅니다. 한 편이라도 기록이 없으면 100.0%로 올려 적지 않습니다.</li>
+              <li><b>운행 열차 수(평소 대비)</b>: 그날 운행 기록이 있는 열차 수 ÷ 같은 요일의 평소 열차 수(확정된 날들의 중앙값, 같은 요일이 3일 이상일 때). 운휴 열차가 계획 자료에서 빠져 운행률이 100%로 보이는 날도 이 값이 줄어든 것으로 드러납니다. 명절·임시열차가 있는 날은 평소와 다를 수 있습니다.</li>
+              <li><b>판정</b>: 95% 구간이 0보다 위에 있고 차이가 1분 이상이면 ‘더 늦었음’, 특보 구간을 지난 열차가 30편 미만이면 ‘자료 부족’, 그 밖은 ‘뚜렷한 차이 없음’입니다.</li>
+              <li>특보를 골랐을 때 <b>다른 종류의 특보만 지난 열차</b>는 비교의 어느 쪽에도 넣지 않습니다(기준을 깨끗하게 두려는 것).</li>
               <li>특보와 지연이 <b>같은 때 일어났다</b>는 것을 보여 줄 뿐, 특보가 지연의 원인이라는 뜻은 아닙니다. 사고·고장·선로 작업, 요일·시간대의 차이가 섞여 있습니다.</li>
               <li>운행 기록은 코레일이 전날 것까지만, 다음 날 오전에 공개하므로 통계는 하루쯤 늦습니다. 열차 종류는 열차번호 대역으로 나눈 것입니다. 광역전철은 포함되지 않습니다.</li>
             </ul>
@@ -96,6 +156,7 @@
 
   <noscript><p class="noscript">이 페이지는 자바스크립트가 필요합니다.</p></noscript>
   <script src="ui.js?v=__BUILD__" defer></script>
+  <script src="analysis-core.js?v=__BUILD__" defer></script>
   <script src="analysis.js?v=__BUILD__" defer></script>
 </body>
 </html>

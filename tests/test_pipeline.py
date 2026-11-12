@@ -155,24 +155,56 @@ class DemoPipelineTest(unittest.TestCase):
     def test_rail_summary(self):
         doc = json.loads((self.dir / "rail" / "summary.json").read_text(encoding="utf-8"))
         self.assertTrue(doc["demo"])
-        self.assertEqual(doc["period"], {"from": "2026-10-29", "to": "2026-11-11", "days": 14})
+        self.assertEqual(doc["period"], {"from": "2026-10-13", "to": "2026-11-11", "days": 30})
         self.assertEqual(len(doc["daily"]), 14)
         self.assertEqual(doc["latest_day"]["date"], "2026-11-11")
         self.assertGreater(doc["warned"]["mean"], doc["clear"]["mean"])  # 시나리오: 특보 구간을 지난 열차가 더 늦다
-        self.assertEqual(set(doc["by_warning"]), {"호우경보", "호우주의보"})
+        self.assertEqual(set(doc["by_warning"]), {"호우경보", "호우주의보", "강풍주의보", "대설주의보"})
+        self.assertEqual(doc["adjusted"]["all"]["verdict"], "later")
         self.assertGreater(doc["daily"][-1]["warned"], 0)
         top = doc["latest_day"]["top_delayed"][0]
         self.assertEqual(set(top), {"trn_no", "line", "class", "origin", "dest", "plan_arr", "arr_delay", "warnings"})
         for key in ("late5", "late10", "late20"):
             self.assertIn(key, doc["clear"])
 
+    def test_site_builds_cube_when_missing(self):
+        """묶음 파일이 없어도 날짜별 기록이 있으면 배포 때 만들어 넣는다."""
+        import shutil
+
+        copy = Path(tempfile.mkdtemp()) / "data"
+        shutil.copytree(self.dir, copy)
+        expected = json.loads((copy / "rail" / "cube.json").read_text(encoding="utf-8"))
+        (copy / "rail" / "cube.json").unlink()
+        out = Path(tempfile.mkdtemp()) / "_site"
+        site.build_site(copy, out)
+        built = json.loads((out / "data" / "rail-cube.json").read_text(encoding="utf-8"))
+        self.assertEqual(built["days"], expected["days"])
+        self.assertEqual((built["lines"], built["warnings"]), (expected["lines"], expected["warnings"]))
+
+    def test_rail_cube_and_days(self):
+        """분석 화면이 쓰는 묶음과 날짜별 목록(데모)."""
+        cube = json.loads((self.dir / "rail" / "cube.json").read_text(encoding="utf-8"))
+        self.assertTrue(cube["demo"])
+        self.assertEqual(len(cube["days"]), 30)
+        self.assertEqual(len(list((self.dir / "rail" / "days").glob("*.json"))), 30)
+        self.assertEqual([d["final"] for d in cube["days"][-2:]], [True, False])  # 어제 것은 아직 잠정
+        short = [d for d in cube["days"] if d["no_record"]]
+        self.assertEqual(len(short), 1)  # 운행 기록이 없는 열차가 있는 날 → 운행률 100% 미만
+        self.assertLess(short[0]["no_record"], short[0]["planned"] // 10)
+        names = {cube["warnings"][i] for d in cube["days"] for c in d["cells"] for i in c[2]}
+        self.assertEqual(names, {"호우경보", "호우주의보", "강풍주의보", "대설주의보"})
+        summary = json.loads((self.dir / "rail" / "summary.json").read_text(encoding="utf-8"))
+        total = sum(c[3] for d in cube["days"] for c in d["cells"])
+        self.assertEqual(total, summary["warned"]["n"] + summary["clear"]["n"])  # 묶음과 누적 통계가 같은 열차를 센다
+
     def test_site_build(self):
         out = Path(tempfile.mkdtemp()) / "_site"
         build = site.build_site(self.dir, out)
         self.assertEqual(len(build), 10)
         for name in ("index.html", "app.js", "style.css", "sw.js", "manifest.webmanifest", "data/latest.json", "data/accuracy.json", "data/warnings.json", "data/detail/suncheon.json",
-                     "rail.html", "rail.js", "live.js", "analysis.html", "analysis.js", "ui.js",
-                     "geo/zones.json", "geo/rail.json", "geo/stations.json", "geo/lines.json", "data/rail.json", "data/live.json"):
+                     "rail.html", "rail.js", "live.js", "analysis.html", "analysis.js", "analysis-core.js", "ui.js",
+                     "geo/zones.json", "geo/rail.json", "geo/stations.json", "geo/lines.json", "data/rail.json", "data/live.json",
+                     "data/rail-cube.json", "data/rail-days/2026-11-11.json"):
             self.assertTrue((out / name).is_file(), name)
         self.assertFalse((out / "data" / "rail").exists())  # 날짜별 원자료는 배포하지 않는다
         self.assertIn(build, (out / "sw.js").read_text(encoding="utf-8"))
@@ -299,6 +331,8 @@ class LocalModeTest(unittest.TestCase):
         self.assertEqual(r("/data/detail/suncheon.json"), self.data / "detail" / "suncheon.json")
         self.assertEqual(r("/data/rail.json"), self.data / "rail" / "summary.json")
         self.assertEqual(r("/data/live.json"), self.data / "live.json")
+        self.assertEqual(r("/data/rail-cube.json"), self.data / "rail" / "cube.json")
+        self.assertEqual(r("/data/rail-days/2026-11-11.json"), self.data / "rail" / "days" / "2026-11-11.json")
         self.assertEqual(r("/rail.html"), self.web / "rail.html")
         self.assertEqual(r("/geo/zones.json"), self.web / "geo" / "zones.json")
 
@@ -308,6 +342,10 @@ class LocalModeTest(unittest.TestCase):
             "/data/history/2026-11-12.json",  # 이력은 화면에 필요 없다
             "/data/rail/days/2026-11-11.json",
             "/data/rail/summary.json",
+            "/data/rail/cube.json",  # 화면에는 rail-cube.json 이라는 이름으로만
+            "/data/rail-days/../summary.json",
+            "/data/rail-days/x.txt",
+            "/data/rail-days/a/2026-11-11.json",
             "/data/../local_keys.txt",
             "/../local_keys.txt",
             "/%2e%2e/local_keys.txt",
@@ -495,7 +533,7 @@ class RailPageTest(unittest.TestCase):
             self.assertIn("참고용입니다. 공식 특보·예비특보가 우선합니다.", html, name)
             self.assertIn('class="lede"', html, name)  # 화면마다 무엇을 보여 주는지 한 줄
         worker = (self.WEB / "sw.js").read_text(encoding="utf-8")
-        for name in ("rail.html", "rail.js", "live.js", "analysis.html", "analysis.js", "ui.js", "geo/zones.json", "geo/rail.json", "geo/stations.json", "geo/lines.json"):
+        for name in ("rail.html", "rail.js", "live.js", "analysis.html", "analysis.js", "analysis-core.js", "ui.js", "geo/zones.json", "geo/rail.json", "geo/stations.json", "geo/lines.json"):
             self.assertIn(name, worker)
 
     def test_analysis_page_has_every_element_the_script_uses(self):
@@ -503,11 +541,19 @@ class RailPageTest(unittest.TestCase):
 
         html = (self.WEB / "analysis.html").read_text(encoding="utf-8")
         script = (self.WEB / "analysis.js").read_text(encoding="utf-8")
+        made = set(re.findall(r'\bid: "([\w-]+)"', script))  # 스크립트가 직접 만드는 요소
         ids = set(re.findall(r'\$\("([\w-]+)"\)', script))
-        self.assertGreaterEqual(len(ids), 6)
-        for name in ids:
+        self.assertGreaterEqual(len(ids), 20)
+        for name in ids - made:
             self.assertIn(f'id="{name}"', html, name)
-        self.assertLess(html.index("ui.js"), html.index("analysis.js"))
+        self.assertLess(html.index("ui.js"), html.index("analysis-core.js"))
+        self.assertLess(html.index("analysis-core.js"), html.index("analysis.js?"))
+        # 구역 순서: 조건 → 요약 → 날짜별 → 종류별 → 분포 → 노선별 → 특보가 있었던 날 → 그날의 열차
+        order = re.findall(r'<h2 id="(h-[a-z]+)"', html)
+        self.assertEqual(order[:8], ["h-filter", "h-kpi", "h-daily", "h-type", "h-dist", "h-line", "h-days", "h-day"])
+        self.assertNotIn("innerHTML", script)  # 받아 온 글은 늘 텍스트로 넣는다
+        self.assertEqual(html.count("data-needs-cube"), 7)  # 운행 기록이 없을 때 감출 구역: ①, ③~⑧ (②에는 안내를 남긴다)
+        self.assertIn("[data-needs-cube]", script)
         self.assertIn("원인", html)  # 상관과 원인을 구분하는 설명
         # 분석은 한곳에: 다른 화면에는 통계 구역을 두지 않는다
         self.assertNotIn('id="delay"', (self.WEB / "rail.html").read_text(encoding="utf-8"))

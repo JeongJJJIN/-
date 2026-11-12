@@ -94,6 +94,10 @@ def resolve_path(url_path: str, web_dir: Path, data_dir: Path) -> Path | None:
             return data_dir / rest[0]
         if rest == ["rail.json"]:  # 열차 지연 통계 (배포 때는 이 이름으로 복사된다)
             return data_dir / "rail" / "summary.json"
+        if rest == ["rail-cube.json"]:
+            return data_dir / "rail" / "cube.json"
+        if len(rest) == 2 and rest[0] == "rail-days" and rest[1].endswith(".json"):
+            return data_dir / "rail" / "days" / rest[1]
         if len(rest) == 2 and rest[0] == "detail" and rest[1].endswith(".json"):
             return data_dir / "detail" / rest[1]
         return None
