@@ -4,6 +4,7 @@
  *  data/latest.json   3시간마다 계산한 지역별 가능성(등급·%·예상 시간대) — 전국의 기상청 특보구역 단위
  *  live.json          몇 분마다 확인한 공식 특보·예비특보(있으면 덮어 쓴다: 발효 중이면 '발효 중', 예비특보면 '높음' 이상)
  *  geo/zones.json     특보구역 경계(지도)
+ *  data/backtest.json 과거 검증 — 지난 예보로 가능성을 다시 계산해 실제 특보와 맞춰 본 결과(teukbo.backtest). 없으면 그 구역을 숨긴다
  * 화면의 상태는 둘뿐이다: 지역을 고르지 않았으면 전국 지도와 전국 요약, 골랐으면 그 지역의 가능성과 그 주변 지도.
  * 원칙: 받아 온 글은 늘 텍스트로 넣는다. 공식 특보가 있으면 가능성보다 먼저 보여 준다.
  */
@@ -16,7 +17,8 @@
   const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"];
   const RELOAD_MS = 10 * 60 * 1000, STORE_KEY = "teukbo.region", MAX_MATCHES = 8, MAX_OTHERS = 4, MAX_NOTABLE = 4;
   const NEAR_COUNT = 16, NEAR_MIN = 12, NEAR_MAX = 42;  // 고른 지역 둘레를 얼마나 넓게 보여 줄지(이웃 지역 수 기준, 지도 단위 ≈ 1.7km)
-  const state = { base: null, latest: null, live: null, zones: null, region: null, query: "", paths: new Map(), centers: new Map(), labels: new Map(), svg: null, wideBox: null, liveTimer: null };
+  const MIN_PROOF_CASES = 30, MIN_PROOF_DAYS = 3;  // 과거 검증 값을 가능성 옆에 적으려면: 표본 30회 이상, 특보가 있었던 날 3일 이상
+  const state = { base: null, latest: null, live: null, zones: null, proof: null, region: null, query: "", paths: new Map(), centers: new Map(), labels: new Map(), svg: null, wideBox: null, liveTimer: null };
 
   const put = (node, ...kids) => { node.append(...kids.flat(Infinity).filter((kid) => kid != null && kid !== false)); return node; };
   const plain = (text) => String(text || "").replace(/[\s()·.]/g, "").toLowerCase();
@@ -110,6 +112,8 @@
         others.length > MAX_OTHERS ? h("p", { class: "basis", text: `외 ${others.length - MAX_OTHERS}종` }) : null);
     }
     const models = (region.models || []).length;
+    const evidence = top && top.sum.g !== "active" ? proofLine(top.hazard, top.sum.p) : null;
+    if (evidence) card.append(h("p", { class: "evidence", text: evidence }));
     card.append(h("p", { class: "basis", text: `앞으로 ${state.latest.horizon_hours}시간${models ? ` · 예보 ${models}개 비교` : ""} · 참고값` }));
     return card;
   }
@@ -138,6 +142,61 @@
   function renderResult() {
     const region = regionOf(state.region);
     clear($("result")).append(region ? renderRegion(region) : renderNation());
+  }
+
+  // ------------------------------------------------------------ 과거 검증
+
+  const pctText = (rate) => (rate == null ? "–" : `${Math.round(rate * 100)}%`);
+  const rowFor = (rows, p) => (rows || []).find((row) => p >= row.from && p <= row.to) || null;
+  const solid = (row) => Boolean(row && row.cases >= MIN_PROOF_CASES && row.event_days >= MIN_PROOF_DAYS);
+
+  /** 가능성 숫자 옆에 적는 근거 한 줄: 과거에 이 구간의 가능성이 나왔을 때 실제 특보로 이어진 비율. 근거가 모자라면 적지 않는다. */
+  function proofLine(hazard, p) {
+    const proof = state.proof;
+    if (!proof || p == null || p <= 0) return null;
+    const own = rowFor(((proof.by_type || {})[hazard.type] || {}).calibration, p), all = rowFor(proof.calibration, p);
+    const row = solid(own) ? own : solid(all) ? all : null;
+    if (!row) return null;
+    const scope = row === own ? `${(proof.by_type[hazard.type] || {}).name || ""} 특보` : "특보";
+    return `과거 검증: 가능성이 ${row.from === row.to ? `${row.from}%` : `${row.from}~${row.to}%`}였던 ${row.cases.toLocaleString("ko-KR")}번 가운데 ${row.hits.toLocaleString("ko-KR")}번(${pctText(row.rate)})이 48시간 안에 실제 ${scope}로 이어졌습니다.`;
+  }
+
+  function renderProof() {
+    const proof = state.proof, section = $("proof"), box = clear($("proof-body"));
+    section.hidden = !proof || !proof.period || !proof.period.replays;
+    if (section.hidden) return;
+    const day = (iso) => { const t = new Date(new Date(iso).getTime() + 9 * 3600 * 1000); return `${t.getUTCMonth() + 1}월 ${t.getUTCDate()}일`; };
+    const count = (n) => Number(n || 0).toLocaleString("ko-KR");
+    const lead = (proof.capture || {})["24"] || {}, alerts = (proof.false_alarm || {}).caution_or_higher || {}, high = (proof.false_alarm || {}).high || {};
+    const kept = (a) => (a.alerts ? (a.alerts - a.false) / a.alerts : null);
+    const tile = (label, value, sub) => h("div", { class: "tile" }, h("p", { class: "label", text: label }), h("p", { class: value === "–" ? "value pending" : "value", text: value }), h("p", { class: "sub", text: sub }));
+    put(box,
+      h("p", { class: "proof-lede", text: `${day(proof.period.from)} ~ ${day(proof.period.to)}, 전국 ${count(proof.regions)}곳을 6시간마다 그때의 예보로 다시 계산해(${count(proof.period.replays)}회) 기상청의 실제 특보 기록과 맞춰 본 결과입니다. 실제 특보 ${count(proof.events)}건 · 특보가 시작된 날 ${count(proof.event_days)}일.` }),
+      h("div", { class: "tiles proof-tiles" },
+        tile("하루 전에 잡아낸 비율", pctText(lead.rate), lead.events ? `실제 특보 ${count(lead.events)}건 중 ${count(lead.captured)}건이 24시간 전 ‘주의’ 이상` : "해당 사례 없음"),
+        tile("‘주의’ 이상이 맞은 비율", pctText(kept(alerts)), alerts.alerts ? `${count(alerts.alerts)}번 표시 중 ${count(alerts.alerts - alerts.false)}번이 48시간 안에 실제 특보` : "해당 사례 없음"),
+        tile("‘높음’이 맞은 비율", pctText(kept(high)), high.alerts ? `${count(high.alerts)}번 표시 중 ${count(high.alerts - high.false)}번이 실제 특보` : "해당 사례 없음")));
+    const rows = (proof.calibration || []).filter((row) => row.cases);
+    if (rows.length) {
+      box.append(h("div", { class: "table-scroll" }, h("table", { class: "fit proof-table" },
+        h("thead", null, h("tr", null, h("th", { scope: "col", text: "표시한 가능성" }), h("th", { scope: "col", text: "횟수" }), h("th", { scope: "col" }, "실제 특보로 이어짐", h("small", null, "48시간 안")))),
+        h("tbody", null, rows.map((row) => h("tr", null, h("th", { scope: "row", text: row.bucket }), h("td", { text: count(row.cases) }), h("td", null, pctText(row.rate), h("small", null, `${count(row.hits)}번 · 특보일 ${row.event_days}일`))))))));
+    }
+    const types = Object.values(proof.by_type || {}).filter((info) => info.events).sort((a, b) => b.events - a.events);
+    if (types.length) {
+      box.append(h("div", { class: "table-scroll" }, h("table", { class: "fit proof-table" },
+        h("thead", null, h("tr", null, h("th", { scope: "col", text: "특보 종류" }), h("th", { scope: "col", text: "실제 특보" }), h("th", { scope: "col" }, "하루 전 포착", h("small", null, "‘주의’ 이상")), h("th", { scope: "col" }, "‘주의’ 이상이 맞음"))),
+        h("tbody", null, types.map((info) => {
+          const c = (info.capture || {})["24"] || {}, a = (info.false_alarm || {}).caution_or_higher || {};
+          return h("tr", null, h("th", { scope: "row", text: info.name }), h("td", { text: `${count(info.events)}건` }),
+            h("td", null, pctText(c.rate), h("small", null, c.events ? `${count(c.captured)}/${count(c.events)}` : "–")),
+            h("td", null, pctText(kept(a)), h("small", null, a.alerts ? `${count(a.alerts - a.false)}/${count(a.alerts)}` : "표시 없음")));
+        })))));
+    }
+    put(box, h("details", { class: "proof-notes" }, h("summary", { text: "어떻게 검증했나 · 한계" }),
+      h("ul", null, (proof.notes || []).map((text) => h("li", { text })),
+        (proof.types_without_events || []).length ? h("li", { text: `이 기간에 실제 특보가 없어 검증하지 못한 종류: ${proof.types_without_events.join(", ")}` }) : null,
+        h("li", { text: "가능성 옆의 ‘과거 검증’ 한 줄은 표본 30회 이상·특보가 있었던 날 3일 이상일 때만 적습니다." }))));
   }
 
   // ------------------------------------------------------------ 지도
@@ -224,7 +283,7 @@
   function render() {
     if (!state.latest) return;
     if (!regionOf(state.region)) state.region = null;
-    renderHead(); renderMatches(); renderResult(); paintMap();
+    renderHead(); renderMatches(); renderResult(); paintMap(); renderProof();
   }
 
   function applyLive() {
@@ -241,7 +300,8 @@
 
   async function load() {
     try {
-      const [latest, zones] = await Promise.all([getJson("data/latest.json"), state.zones || getJson("geo/zones.json")]);
+      const [latest, zones, proof] = await Promise.all([getJson("data/latest.json"), state.zones || getJson("geo/zones.json"), getJson("data/backtest.json").catch(() => null)]);
+      state.proof = proof || state.proof;
       const first = !state.base;
       state.base = latest; state.zones = zones;
       state.latest = Live.applyToLatest(latest, state.live, (latest.live || {}).stale_after_minutes || 30);

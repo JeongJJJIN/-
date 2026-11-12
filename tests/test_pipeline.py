@@ -307,11 +307,18 @@ class SourceCheckTest(unittest.TestCase):
             first = next(iter(forecasts[model.id].values()))
             return {r.id: forecasts[model.id].get(r.id, first) for r in regions}
 
+        from teukbo import backtest
+
+        def past(regions, model, *_a, **_kw):  # 과거 예보(검증용)도 실제로 받아 보는지
+            first = next(iter(forecasts[model.id].values()))
+            return {r.id: {1: first, 2: first} for r in regions}
+
         out = io.StringIO()
-        with mock.patch.object(open_meteo, "fetch_model", side_effect=fake), mock.patch.dict(
+        with mock.patch.object(open_meteo, "fetch_model", side_effect=fake), mock.patch.object(backtest, "fetch_archive", side_effect=past), mock.patch.dict(
             "os.environ", {"DATA_GO_KR_SERVICE_KEY": "", "KMA_APIHUB_KEY": ""}
         ), contextlib.redirect_stdout(out):
             code = check.main()
+        self.assertIn("정상  ecmwf_ifs025 2일 전 예측", out.getvalue())
         self.assertEqual(code, 0)
         self.assertIn("정상  ecmwf_ifs025", out.getvalue())
         self.assertIn("없는 변수: gust", out.getvalue())  # JMA 는 돌풍 자료가 없다
@@ -718,10 +725,12 @@ class RailPageTest(unittest.TestCase):
         self.assertNotIn('<nav', html)
         for other in ("full.html", "rail.html", "analysis.html"):
             self.assertNotIn(other, html, other)
-        self.assertEqual(re.findall(r"<h2", html), [])  # 구역 제목을 늘어놓지 않는다
+        self.assertEqual(re.findall(r'<h2 id="([\w-]+)"', html), ["h-proof"])  # 구역 제목은 맨 아래 '과거 검증' 하나뿐
+        self.assertIn("data/backtest.json", script)
         body = html[html.index("<main"):html.index("</main>")]
         self.assertLess(body.index('id="q"'), body.index('id="result"'))  # 찾기 → 가능성 → 지도
         self.assertLess(body.index('id="result"'), body.index('id="map"'))
+        self.assertLess(body.index('id="map"'), body.index('id="proof"'))  # 과거 검증은 지도 아래에
         for name in set(re.findall(r'\$\("([\w-]+)"\)', script)):
             self.assertIn(f'id="{name}"', html, name)
         self.assertNotIn("innerHTML", script)  # 받아 온 글은 늘 텍스트로 넣는다

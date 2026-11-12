@@ -826,3 +826,18 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
 .swatch.map-key.g-high { background: var(--m-high); }
 .swatch.map-key.g-active { background: var(--m-active); }
 .home .foot { margin-top: 24px; }
+.result .evidence { margin: 12px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--g-low-wash); font-size: 13.5px; }
+.proof { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--hair); }
+.proof h2 { margin: 0 0 6px; font-size: 18px; }
+.proof-lede { margin: 0 0 10px; color: var(--ink-2); font-size: 14px; }
+.proof-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.proof-tiles .tile .value { font-size: 28px; }
+.proof-tiles .tile .label { min-height: 2.6em; font-weight: 700; color: var(--ink); }
+table.fit.proof-table { margin-top: 12px; }
+table.fit.proof-table td { white-space: nowrap; }
+table.fit.proof-table tbody th { text-align: left; white-space: nowrap; }
+.proof-notes { margin-top: 12px; color: var(--ink-2); font-size: 13.5px; }
+.proof-notes summary { cursor: pointer; color: var(--link); font-weight: 600; }
+.proof-notes ul { margin: 8px 0 0; padding-left: 18px; }
+.proof-notes li { margin: 0 0 4px; }
+@media (max-width: 480px) { .proof-tiles { grid-template-columns: 1fr; } .proof-tiles .tile .label { min-height: 0; } }
