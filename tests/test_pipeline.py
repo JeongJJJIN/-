@@ -691,20 +691,39 @@ class RailPageTest(unittest.TestCase):
         self.assertNotIn("gis.korail.com", script)  # 코레일 화면의 내부 주소를 직접 부르지 않는다
         self.assertNotIn("gis.korail.com", (self.WEB / "live.js").read_text(encoding="utf-8"))
 
-    def test_three_pages_share_tabs_and_work_offline(self):
+    def test_first_screen_is_only_search_probability_and_map(self):
+        """첫 화면은 지역 찾기 → 그 지역의 가능성 → 지도, 이것만. 다른 화면으로 가는 메뉴를 두지 않는다."""
         import re
 
-        pages = {name: (self.WEB / name).read_text(encoding="utf-8") for name in ("index.html", "rail.html", "analysis.html")}
-        current = {"index.html": ["./"], "rail.html": ["rail.html"], "analysis.html": []}  # 참고 자료(분석)는 메뉴에 두지 않는다
+        html = (self.WEB / "index.html").read_text(encoding="utf-8")
+        script = (self.WEB / "home.js").read_text(encoding="utf-8")
+        self.assertIn("참고용입니다. 공식 특보·예비특보가 우선합니다.", html)
+        self.assertNotIn('<nav', html)
+        for other in ("full.html", "rail.html", "analysis.html"):
+            self.assertNotIn(other, html, other)
+        self.assertEqual(re.findall(r"<h2", html), [])  # 구역 제목을 늘어놓지 않는다
+        body = html[html.index("<main"):html.index("</main>")]
+        self.assertLess(body.index('id="q"'), body.index('id="result"'))  # 찾기 → 가능성 → 지도
+        self.assertLess(body.index('id="result"'), body.index('id="map"'))
+        for name in set(re.findall(r'\$\("([\w-]+)"\)', script)):
+            self.assertIn(f'id="{name}"', html, name)
+        self.assertNotIn("innerHTML", script)  # 받아 온 글은 늘 텍스트로 넣는다
+        self.assertIn("Open-Meteo", html)  # 출처 표기(CC BY 4.0)는 남긴다
+        self.assertLess(html.index("ui.js"), html.index("home.js"))
+        self.assertLess(html.index("live.js"), html.index("home.js"))
+        self.assertIn("applyToLatest", script)  # 공식 특보·예비특보가 나오면 가능성보다 먼저 반영한다
+        worker = (self.WEB / "sw.js").read_text(encoding="utf-8")
+        self.assertIn('"home.js?v=__BUILD__"', worker)
+
+    def test_older_pages_are_kept_but_not_linked_from_the_first_screen(self):
+        import re
+
+        pages = {name: (self.WEB / name).read_text(encoding="utf-8") for name in ("full.html", "rail.html", "analysis.html")}
+        current = {"full.html": ["full.html"], "rail.html": ["rail.html"], "analysis.html": []}
         for name, html in pages.items():
             nav = re.search(r'<nav class="tabs".*?</nav>', html, re.S).group(0)
-            self.assertEqual(re.findall(r'<a href="([^"]+)"', nav), ["./", "rail.html"], name)
+            self.assertEqual(re.findall(r'<a href="([^"]+)"', nav), ["./", "full.html", "rail.html"], name)
             self.assertEqual(re.findall(r'<a href="([^"]+)" aria-current="page"', nav), current[name], name)
-            self.assertEqual(re.findall(r">([^<]+)</a>", nav), ["특보 전망", "지금 지도"], name)
-        # 본래 목적은 '특보 가능성': 첫 화면에서 공식 특보 바로 다음에 온다(지금 날씨·철도 전망보다 먼저)
-        order = re.findall(r'<h2 id="(h-[a-z]+)"', pages["index.html"])
-        self.assertEqual(order[:3], ["h-official", "h-hazards", "h-now"])
-        self.assertIn('href="analysis.html"', pages["index.html"])  # 지우지는 않고 맨 아래에 작은 링크로
         for name, html in pages.items():
             self.assertIn("참고용입니다. 공식 특보·예비특보가 우선합니다.", html, name)
             self.assertIn('class="lede"', html, name)  # 화면마다 무엇을 보여 주는지 한 줄
@@ -733,12 +752,12 @@ class RailPageTest(unittest.TestCase):
         self.assertIn("원인", html)  # 상관과 원인을 구분하는 설명
         # 분석은 한곳에: 다른 화면에는 통계 구역을 두지 않는다
         self.assertNotIn('id="delay"', (self.WEB / "rail.html").read_text(encoding="utf-8"))
-        self.assertNotIn('id="accuracy"', (self.WEB / "index.html").read_text(encoding="utf-8"))
+        self.assertNotIn('id="accuracy"', (self.WEB / "full.html").read_text(encoding="utf-8"))
 
     def test_pages_have_elements_for_live_data(self):
         import re
 
-        index = (self.WEB / "index.html").read_text(encoding="utf-8")
+        index = (self.WEB / "full.html").read_text(encoding="utf-8")  # 예전의 자세한 화면
         rail = (self.WEB / "rail.html").read_text(encoding="utf-8")
         app = (self.WEB / "app.js").read_text(encoding="utf-8")
         for name in set(re.findall(r'\$\("([\w-]+)"\)', app)):
