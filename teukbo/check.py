@@ -14,7 +14,9 @@ import sys
 
 from .config import load_config
 from .http import FetchError, normalize_service_key
-from .sources import kma_forecast, kma_warnings, open_meteo
+from datetime import timedelta
+
+from .sources import kma_forecast, kma_warnings, korail, open_meteo
 from .timeutil import iso, now_kst
 
 
@@ -78,8 +80,51 @@ def main() -> int:
                 kind = "예비" if w.status == "preliminary" else "발효"
                 print(f"        {region.name}: {w.type_name}{w.level_name if w.status == 'active' else ' 예비특보'} [{kind}] 구역 {w.zone_name}")
 
+    print("\n[코레일 열차운행정보] (전날까지의 실제 운행 기록 — 지연 통계용)")
+    if not data_go_kr_key:
+        print("  건너뜀 (인증키 미설정)")
+    else:
+        check_korail(data_go_kr_key, now, opts)
+
     print(f"\n예측 자료 {ok_models}개 사용 가능" + ("" if ok_models else " — 계산할 수 없습니다"))
     return 0 if ok_models else 1
+
+
+def check_korail(key: str, now, opts: dict) -> None:
+    """응답 형식과 하루 분량을 확인한다(처음 몇 행을 그대로 보여 준다)."""
+    yesterday = (now - timedelta(days=1)).strftime("%Y%m%d")
+    today = now.strftime("%Y%m%d")
+    try:
+        items, total = korail.fetch_page("travelerTrainRunInfo2", key, korail.day_conds(yesterday), 1, 6, opts)
+        print(f"  정상  운행정보 {yesterday}: 전체 {total}행")
+        for row in items:
+            print("        " + ", ".join(f"{k}={row.get(k)!r}" for k in ("trn_no", "trn_run_sn", "stn_nm", "stn_cd", "mrnt_nm", "mrnt_cd", "uppln_dn_se_cd", "stop_se_nm", "stop_se_cd", "trn_arvl_dt", "trn_dptre_dt")))
+        _, total_today = korail.fetch_page("travelerTrainRunInfo2", key, korail.day_conds(today), 1, 1, opts)
+        print(f"        (오늘 {today} 운행정보: {total_today}행 — 0 이면 당일 자료는 제공되지 않는 것)")
+    except FetchError as e:
+        print(f"  실패  운행정보: {e}")
+        if "REGISTERED" in str(e) or "ACCESS_DENIED" in str(e) or "403" in str(e):
+            print("        → 공공데이터포털에서 '한국철도공사_열차운행정보' 활용신청이 필요합니다: https://www.data.go.kr/data/15125762/openapi.do")
+        return
+    try:
+        items, total = korail.fetch_page("travelerTrainRunPlan2", key, korail.day_conds(today), 1, 4, opts)
+        print(f"  정상  운행계획 {today}: 전체 {total}행")
+        for row in items:
+            print("        " + ", ".join(f"{k}={row.get(k)!r}" for k in ("trn_no", "dptre_stn_nm", "dptre_stn_cd", "arvl_stn_nm", "arvl_stn_cd", "trn_plan_dptre_dt", "trn_plan_arvl_dt")))
+    except FetchError as e:
+        print(f"  실패  운행계획: {e}")
+    for code_type in ("mrnt_cd", "stop_se_cd", "uppln_dn_se_cd"):
+        try:
+            codes = korail.fetch_codes(key, code_type, opts)
+            shown = ", ".join(f"{c}={v}" for c, v in list(codes.items())[:60])
+            print(f"  정상  코드 {code_type}: {len(codes)}개 — {shown}")
+        except FetchError as e:
+            print(f"  실패  코드 {code_type}: {e}")
+    try:
+        _, total = korail.fetch_page("codes2", key, {"type::EQ": "stn_cd"}, 1, 1, opts)
+        print(f"  정상  코드 stn_cd: {total}개 역")
+    except FetchError as e:
+        print(f"  실패  코드 stn_cd: {e}")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from unittest import mock
 
 from teukbo import http
 from teukbo.http import FetchError
-from teukbo.sources import kma_forecast, kma_warnings, open_meteo
+from teukbo.sources import kma_forecast, kma_warnings, korail, open_meteo
 from teukbo.sources.datagokr import NoData, extract_items
 
 from .helpers import config, kst
@@ -482,6 +482,52 @@ class ApiHubWarningTest(unittest.TestCase):
         self.assertEqual((status["ok"], status["provider"]), (True, "기상청 API허브"))
         self.assertEqual(hub.call_args.args[1]["disp"], 1)
         self.assertTrue(official["mokpo"].available)
+
+
+# ---------------------------------------------------------------- 코레일 열차운행정보
+
+
+class KorailTest(unittest.TestCase):
+    def test_request_parameters(self):
+        params = korail.build_params("KEY", 2, 1000, korail.day_conds("20261111"))
+        self.assertEqual(params["cond[run_ymd::GTE]"], "20261111")
+        self.assertEqual(params["cond[run_ymd::LTE]"], "20261111")
+        self.assertEqual((params["pageNo"], params["numOfRows"], params["returnType"]), (2, 1000, "JSON"))
+        url = http.build_url(f"{korail.BASE}/travelerTrainRunInfo2", params)
+        self.assertIn("cond%5Brun_ymd%3A%3AGTE%5D=20261111", url)
+        self.assertNotIn("KEY", http.redact(url))
+
+    def test_pages_until_total(self):
+        calls = []
+
+        def fake(_url, params, **_kw):
+            calls.append(params["pageNo"])
+            page = params["pageNo"]
+            items = [{"trn_no": f"{page}-{i}"} for i in range(2 if page < 3 else 1)]
+            return {"response": {"header": {"resultCode": "00"}, "body": {"items": {"item": items}, "totalCount": 5}}}
+
+        with mock.patch.object(korail, "get_json", side_effect=fake):
+            rows = korail.fetch_all("travelerTrainRunInfo2", "k", korail.day_conds("20261111"), page_size=2)
+        self.assertEqual(calls, [1, 2, 3])
+        self.assertEqual(len(rows), 5)
+
+    def test_no_data_is_empty_not_error(self):
+        nodata = {"response": {"header": {"resultCode": "03", "resultMsg": "NODATA_ERROR"}}}
+        with mock.patch.object(korail, "get_json", return_value=nodata):
+            self.assertEqual(korail.fetch_run_info("k", "20261112"), [])
+
+    def test_unsubscribed_key_is_an_error(self):
+        denied = {"OpenAPI_ServiceResponse": {"cmmMsgHeader": {"errMsg": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR", "returnAuthMsg": "등록되지 않은 서비스키", "returnReasonCode": "30"}}}
+        with mock.patch.object(korail, "get_json", return_value=denied):
+            with self.assertRaisesRegex(FetchError, "NOT_REGISTERED"):
+                korail.fetch_run_plan("k", "20261112")
+
+    def test_codes(self):
+        body = {"response": {"header": {"resultCode": "00"}, "body": {"items": {"item": [{"code": "01", "type": "mrnt_cd", "value": "경부선"}]}, "totalCount": 1}}}
+        with mock.patch.object(korail, "get_json", return_value=body):
+            self.assertEqual(korail.fetch_codes("k", "mrnt_cd"), {"01": "경부선"})
+        with self.assertRaises(ValueError):
+            korail.fetch_codes("k", "nope")
 
 
 # ---------------------------------------------------------------- HTTP
