@@ -797,17 +797,30 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
 .pill.g-unknown { background: transparent; border-color: var(--axis); border-style: dashed; color: var(--ink-2); }
 
 .home-map { margin-top: 12px; }
-.home-map svg { display: block; width: 100%; height: auto; max-height: 58vh; }
-.home-map .around path { fill: var(--m-around); stroke: var(--axis); stroke-width: 0.2; opacity: .7; }
-.home-map .zone { stroke: var(--surface); stroke-width: 0.45; cursor: pointer; }
+.map-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; min-height: 40px; }
+.map-head .legend { margin: 0; }
+.home-map svg { display: block; width: 100%; height: auto; max-height: 62vh; margin-top: 4px; }
+/* 선 굵기는 확대해도 화면에서 같은 굵기로 */
+.home-map path { vector-effect: non-scaling-stroke; }
+.home-map .around path { fill: var(--m-around); stroke: var(--axis); stroke-width: 0.6px; opacity: .7; }
+.home-map .zone { stroke: var(--surface); stroke-width: 1px; cursor: pointer; }
+.home-map .wide .zone { stroke-width: 0.5px; }
 .home-map .zone.g-low, .home-map .zone.g-unknown { fill: var(--m-low); }
 .home-map .zone.g-caution { fill: var(--m-caution); }
 .home-map .zone.g-high { fill: var(--m-high); }
 .home-map .zone.g-active { fill: var(--m-active); }
-.home-map .zone.picked { stroke: var(--ink); stroke-width: 1.1; }
+.home-map .zone.picked { stroke: var(--ink); stroke-width: 2.5px; }
 .home-map .zone:focus { outline: none; }
-.home-map .zone:focus-visible { stroke: var(--series-1); stroke-width: 1.3; }
-.home-map .labels text { fill: var(--ink); font-size: 3.1px; font-weight: 600; pointer-events: none; paint-order: stroke; stroke: var(--surface); stroke-width: 0.9px; stroke-linejoin: round; }
+.home-map .zone:focus-visible { stroke: var(--series-1); stroke-width: 3px; }
+.home-map .labels text { fill: var(--ink); font-size: var(--label, 3px); font-weight: 600; pointer-events: none; paint-order: stroke; stroke: var(--surface); stroke-width: 0.28em; stroke-linejoin: round; }
+.home-map .labels text.picked { font-weight: 800; }
+.home-map .wide .labels text { display: none; }  /* 전국 지도에서는 이름을 적지 않는다(지역이 200곳이 넘는다) */
+.result .tally { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; font-size: 17px; }
+.result .tally b { font-size: 24px; font-variant-numeric: tabular-nums; }
+.result .tally .pill { font-size: 14px; padding: 1px 10px; vertical-align: 3px; }
+.result .others.notable li { grid-template-columns: minmax(0, 1fr) auto minmax(5.5em, auto); }
+.result .others.notable .hz-small { color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+.result .others.notable .linklike { overflow: hidden; text-overflow: ellipsis; }
 .swatch.map-key.g-low { background: var(--m-low); }
 .swatch.map-key.g-caution { background: var(--m-caution); }
 .swatch.map-key.g-high { background: var(--m-high); }

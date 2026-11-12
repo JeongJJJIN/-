@@ -17,6 +17,14 @@ from .helpers import config, kst
 CFG = config()
 
 
+def load_settings_live():
+    import json
+
+    from teukbo.config import ROOT
+
+    return json.loads((ROOT / "config" / "settings.json").read_text(encoding="utf-8"))["live"]
+
+
 def ok(items):
     return {"response": {"header": {"resultCode": "00", "resultMsg": "NORMAL_SERVICE"}, "body": {"items": {"item": items}, "totalCount": len(items)}}}
 
@@ -176,6 +184,21 @@ class LiveCollectTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.env = {"DATA_GO_KR_SERVICE_KEY": "k"}
+        # 지금 날씨·6시간 예보는 설정에서 꺼 두었다(전국으로 넓히며). 이 테스트들은 켠 상태의 동작을 본다.
+        switch = mock.patch.dict(CFG.settings.raw["live"], {"obs": True, "fcst": True})
+        switch.start()
+        self.addCleanup(switch.stop)
+
+    def test_weather_pulls_can_be_switched_off(self):
+        """설정에서 끄면 실황·초단기예보는 아예 받지 않고(호출 0회), 특보는 그대로 받는다."""
+        with mock.patch.dict(CFG.settings.raw["live"], {"obs": False, "fcst": False}):
+            doc = self.run_at(kst(2026, 11, 13, 1, 20))
+        self.assertEqual((self.calls["warnings"], self.calls["ncst"], self.calls["fcst"]), (1, 0, 0))
+        self.assertTrue(doc["warnings"]["available"])
+        self.assertEqual((doc["obs"]["available"], doc["obs"].get("disabled"), doc["fcst"]["available"]), (False, True, False))
+        self.assertNotIn("now", doc["regions"]["suncheon"])
+        self.assertIn("official", doc["regions"]["suncheon"])
+        self.assertIs(load_settings_live()["obs"], False)  # 저장소 설정은 꺼 둔 상태
 
     def run_at(self, now, prev=None):
         return live.collect(CFG, now, self.env, prev)
@@ -283,7 +306,7 @@ class LiveCollectTest(unittest.TestCase):
     def test_command_line_writes_file_and_summary(self):
         out = Path(tempfile.mkdtemp()) / "live" / "live.json"
         summary = out.parent.parent / "summary.md"
-        with mock.patch.dict("os.environ", {"DATA_GO_KR_SERVICE_KEY": "k", "GITHUB_STEP_SUMMARY": str(summary)}):
+        with mock.patch.dict("os.environ", {"DATA_GO_KR_SERVICE_KEY": "k", "GITHUB_STEP_SUMMARY": str(summary)}), mock.patch.object(live, "load_config", return_value=CFG):  # 실황·예보를 켠 설정으로
             self.assertEqual(live.main(["--out", str(out), "--prev", str(out), "--now", "2026-11-13T01:20+09:00"]), 0)  # 직전 파일이 없어도 된다
             self.assertEqual(live.main(["--out", str(out), "--prev", str(out), "--now", "2026-11-13T01:25+09:00"]), 0)
         doc = json.loads(out.read_text(encoding="utf-8"))

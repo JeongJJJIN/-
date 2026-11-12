@@ -9,9 +9,10 @@ from teukbo.config import ROOT
 from teukbo.http import FetchError
 from teukbo.sources import kma_forecast, kma_warnings, open_meteo
 
-from .helpers import config, kst
+from .helpers import config, kst, small_config
 
-CFG = config()
+FULL = config()  # 전국
+CFG = small_config()  # 수집·계산 전체를 돌리는 테스트는 전남 23곳으로(빠르게)
 
 
 class DemoPipelineTest(unittest.TestCase):
@@ -299,8 +300,12 @@ class SourceCheckTest(unittest.TestCase):
         now = kst(2026, 11, 12, 21)
         forecasts, _ = demo.generate(CFG, now, [now])
 
+        sizes = []
+
         def fake(regions, model, *_a, **_kw):
-            return {r.id: forecasts[model.id][r.id] for r in regions}
+            sizes.append(len(regions))
+            first = next(iter(forecasts[model.id].values()))
+            return {r.id: forecasts[model.id].get(r.id, first) for r in regions}
 
         out = io.StringIO()
         with mock.patch.object(open_meteo, "fetch_model", side_effect=fake), mock.patch.dict(
@@ -310,6 +315,8 @@ class SourceCheckTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("정상  ecmwf_ifs025", out.getvalue())
         self.assertIn("없는 변수: gust", out.getvalue())  # JMA 는 돌풍 자료가 없다
+        self.assertIn("정상  묶음 요청", out.getvalue())  # 전국 수집에 쓰는 여러 지점 묶음 요청도 한 번 확인한다
+        self.assertEqual(max(sizes), FULL.settings.raw["fetch"]["open_meteo_chunk"])
 
 
 class LocalModeTest(unittest.TestCase):
@@ -613,12 +620,22 @@ class RailPageTest(unittest.TestCase):
         from teukbo.zones import load_zone_table
 
         table = load_zone_table()
-        for region in CFG.regions:
+        owned: dict[str, list[str]] = {}
+        for region in FULL.regions:
             on_map = {c for c in region.zone_codes if c in self.zones}
             self.assertTrue(on_map, region.name)
+            for code in on_map:
+                owned.setdefault(code, []).append(region.id)
             for code in region.zone_codes:
-                if code not in self.zones:  # 세분화 전의 상위 구역 코드 → 그 말단 구역들이 지도에 있어야 한다
-                    self.assertTrue(set(table.leaves(code)) <= on_map, f"{region.name} {code}")
+                if code not in self.zones:  # 상위 구역(시·군) 코드 → 이 지역이 그 말단 구역 가운데 하나여야 한다
+                    self.assertTrue(set(table.leaves(code)) & on_map, f"{region.name} {code}")
+            if not region.id.startswith("L"):  # 시·군 단위로 묶은 지역(전남)은 그 시·군의 말단 구역을 모두 가진다
+                for code in region.zone_codes:
+                    if code not in self.zones:
+                        self.assertTrue(set(table.leaves(code)) <= on_map, f"{region.name} {code}")
+        # 전국: 지도의 모든 육상 특보구역이 어느 지역엔가 속한다(빈 곳 없이). 두 지역이 함께 쓰는 구역은 보성(보성군·벌교)뿐
+        self.assertEqual(set(owned), set(self.zones))
+        self.assertEqual({code: ids for code, ids in owned.items() if len(ids) > 1}, {"L1050900": ["beolgyo", "boseong"]})
 
     def test_stations_point_to_zones_on_the_map(self):
         self.assertGreater(len(self.stations), 400)
@@ -712,6 +729,10 @@ class RailPageTest(unittest.TestCase):
         self.assertLess(html.index("ui.js"), html.index("home.js"))
         self.assertLess(html.index("live.js"), html.index("home.js"))
         self.assertIn("applyToLatest", script)  # 공식 특보·예비특보가 나오면 가능성보다 먼저 반영한다
+        # 전국: 지역을 고르지 않으면 전국 요약과 전국 지도, 고르면 그 지역과 주변 지도 — '전국 보기'로 돌아간다
+        self.assertIn('id="back"', html)
+        self.assertIn("renderNation", script)
+        self.assertIn("nearBox", script)
         worker = (self.WEB / "sw.js").read_text(encoding="utf-8")
         self.assertIn('"home.js?v=__BUILD__"', worker)
 
@@ -781,7 +802,7 @@ class RailPageTest(unittest.TestCase):
         node = shutil.which("node")
         if node is None:
             self.skipTest("node 가 없습니다")
-        points = [[r.lon, r.lat] for r in CFG.regions] + [[126.0, 38.0], [124.7, 33.1], [131.87, 37.24]]
+        points = [[r.lon, r.lat] for r in FULL.regions] + [[126.0, 38.0], [124.7, 33.1], [131.87, 37.24]]
         script = """
             const fs = require('fs');
             global.window = {}; global.document = { addEventListener() {} };
@@ -802,8 +823,8 @@ class RailPageTest(unittest.TestCase):
             grid = (int((east_km / 5.0 + 43 + 0.5) // 1), int((north_km / 5.0 + 136 + 0.5) // 1))
             self.assertEqual(grid, latlon_to_grid(lat, lon), (lon, lat))
             self.assertTrue(0 <= x <= image["width"] and 0 <= y <= image["height"], (lon, lat))  # 우리나라는 모두 영상 안에 들어온다
-        self.assertEqual(out["xy"][len(CFG.regions)], [image["x0"], image["y0"]])  # 기준점(126°E, 38°N)
-        for region, (x, y) in zip(CFG.regions, out["xy"]):
+        self.assertEqual(out["xy"][len(FULL.regions)], [image["x0"], image["y0"]])  # 기준점(126°E, 38°N)
+        for region, (x, y) in zip(FULL.regions, out["xy"]):
             self.assertEqual((region.nx, region.ny), latlon_to_grid(region.lat, region.lon), region.name)
         self.assertEqual(out["scale"], sorted(out["scale"]))  # 범례는 약한 비 → 강한 비 순서
         self.assertEqual(len(out["scale"]), 24)

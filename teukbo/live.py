@@ -113,6 +113,9 @@ def collect(cfg: Config, now: datetime, env: Mapping[str, str], prev: Mapping[st
         before = prev.get(name) or {}
         age = _age_minutes(before, now)
         newest = iso(kma_ultra.base_time(bases(now)[0]))
+        if not settings.get(name, True):  # 설정에서 끈 자료(obs·fcst)는 받지 않는다
+            sections[name] = {"available": False, "checked_at": None, "error": None, "disabled": True}
+            continue
         due = not before.get("available") or age is None or age >= every - 1.0 or before.get("base") != newest
         if due and (data_key or hub_key):
             data, st = fetch(cfg.regions, now, data_go_kr_key=data_key, apihub_key=hub_key, http_opts=http_opts)

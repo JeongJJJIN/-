@@ -78,18 +78,18 @@
     {
       "id": "strong_wind_advisory", "type": "strong_wind", "level": "advisory", "name": "강풍주의보",
       "official_text": "육상에서 풍속 14m/s 이상 또는 순간풍속 20m/s 이상 예상될 때 (산지는 풍속 17m/s 이상 또는 순간풍속 25m/s 이상)",
-      "note": "전남에는 '산지' 특보구역이 없어 육상 기준만 적용합니다.",
+      "note": "이름이 '산지'로 끝나는 특보구역에는 산지 기준을 적용합니다(regions.json 의 params).",
       "criteria": [
-        {"indicator": "wind", "op": ">=", "value": 14},
-        {"indicator": "gust", "op": ">=", "value": 20}
+        {"indicator": "wind", "op": ">=", "value": 14, "region_param": "strong_wind_min"},
+        {"indicator": "gust", "op": ">=", "value": 20, "region_param": "strong_gust_min"}
       ]
     },
     {
       "id": "strong_wind_warning", "type": "strong_wind", "level": "warning", "name": "강풍경보",
       "official_text": "육상에서 풍속 21m/s 이상 또는 순간풍속 26m/s 이상 예상될 때 (산지는 풍속 24m/s 이상 또는 순간풍속 30m/s 이상)",
       "criteria": [
-        {"indicator": "wind", "op": ">=", "value": 21},
-        {"indicator": "gust", "op": ">=", "value": 26}
+        {"indicator": "wind", "op": ">=", "value": 21, "region_param": "strong_wind_warning_min"},
+        {"indicator": "gust", "op": ">=", "value": 26, "region_param": "strong_gust_warning_min"}
       ]
     },
     {
@@ -103,7 +103,7 @@
       "id": "heavy_snow_warning", "type": "heavy_snow", "level": "warning", "name": "대설경보",
       "official_text": "24시간 동안 내려 쌓인 눈의 양이 20cm 이상 예상될 때 (산지는 30cm 이상)",
       "criteria": [
-        {"indicator": "snow_24h", "op": ">=", "value": 20}
+        {"indicator": "snow_24h", "op": ">=", "value": 20, "region_param": "heavy_snow_warning_min"}
       ]
     },
     {
