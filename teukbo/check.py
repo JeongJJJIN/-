@@ -106,13 +106,44 @@ def check_korail(key: str, now, opts: dict) -> None:
         if "REGISTERED" in str(e) or "ACCESS_DENIED" in str(e) or "403" in str(e):
             print("        → 공공데이터포털에서 '한국철도공사_열차운행정보' 활용신청이 필요합니다: https://www.data.go.kr/data/15125762/openapi.do")
         return
+    plan_fields = ("run_ymd", "trn_no", "dptre_stn_nm", "dptre_stn_cd", "arvl_stn_nm", "arvl_stn_cd", "trn_plan_dptre_dt", "trn_plan_arvl_dt")
+    tomorrow = (now + timedelta(days=1)).strftime("%Y%m%d")
+    probes = [
+        (f"어제 {yesterday}", korail.day_conds(yesterday)),
+        (f"오늘 {today}", korail.day_conds(today)),
+        (f"내일 {tomorrow}", korail.day_conds(tomorrow)),
+        ("조건 없음", None),
+        (f"어제 이후(GTE {yesterday})", {"run_ymd::GTE": yesterday}),
+        ("어제(하이픈 형식)", korail.day_conds(f"{yesterday[:4]}-{yesterday[4:6]}-{yesterday[6:]}")),
+    ]
+    for label, conds in probes:
+        try:
+            items, total = korail.fetch_page("travelerTrainRunPlan2", key, conds, 1, 3, opts)
+            print(f"  정상  운행계획 [{label}]: 전체 {total}행")
+            for row in items:
+                print("        " + ", ".join(f"{k}={row.get(k)!r}" for k in plan_fields))
+        except FetchError as e:
+            print(f"  실패  운행계획 [{label}]: {e}")
+    # 운행정보: 종착 행의 모양과 한 열차의 전체 정차 기록
     try:
-        items, total = korail.fetch_page("travelerTrainRunPlan2", key, korail.day_conds(today), 1, 4, opts)
-        print(f"  정상  운행계획 {today}: 전체 {total}행")
+        items, total = korail.fetch_page("travelerTrainRunInfo2", key, {**korail.day_conds(yesterday), "stn_nm::EQ": "순천"}, 1, 5, opts)
+        print(f"  정상  운행정보 [어제 순천역]: 전체 {total}행")
         for row in items:
-            print("        " + ", ".join(f"{k}={row.get(k)!r}" for k in ("trn_no", "dptre_stn_nm", "dptre_stn_cd", "arvl_stn_nm", "arvl_stn_cd", "trn_plan_dptre_dt", "trn_plan_arvl_dt")))
+            print("        " + ", ".join(f"{k}={row.get(k)!r}" for k in ("trn_no", "trn_run_sn", "stn_nm", "mrnt_nm", "uppln_dn_se_cd", "stop_se_nm", "trn_arvl_dt", "trn_dptre_dt")))
+        items, _ = korail.fetch_page("travelerTrainRunInfo2", key, korail.day_conds(yesterday), 10, 1000, opts)
+        kinds: dict[str, int] = {}
+        lines: dict[str, int] = {}
+        for row in items:
+            kinds[str(row.get("stop_se_nm"))] = kinds.get(str(row.get("stop_se_nm")), 0) + 1
+            lines[str(row.get("mrnt_nm"))] = lines.get(str(row.get("mrnt_nm")), 0) + 1
+        print(f"        마지막 쪽({len(items)}행) 정차구분: {kinds}")
+        print(f"        마지막 쪽 주운행선: {lines}")
+        if items:
+            last_train = items[-1].get("trn_no")
+            tail = [r for r in items if r.get("trn_no") == last_train]
+            print(f"        열차 {last_train} 기록 {len(tail)}행: " + " → ".join(f"{r.get('stn_nm')}({r.get('stop_se_nm')},{str(r.get('trn_arvl_dt'))[11:16]}/{str(r.get('trn_dptre_dt'))[11:16]})" for r in tail[:30]))
     except FetchError as e:
-        print(f"  실패  운행계획: {e}")
+        print(f"  실패  운행정보 추가 확인: {e}")
     for code_type in ("mrnt_cd", "stop_se_cd", "uppln_dn_se_cd"):
         try:
             codes = korail.fetch_codes(key, code_type, opts)
