@@ -42,11 +42,20 @@ jobs:
           KMA_APIHUB_KEY: ${{ secrets.KMA_APIHUB_KEY }}
         run: python3 -m teukbo.run
 
+      - name: 열차 운행 기록 집계 (전날까지의 코레일 공식 기록 × 특보)
+        # 철도 통계가 실패해도 기상 수집·배포는 계속한다. 한 번에 며칠씩만 받아 과거 기록을 차례로 채운다.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+        run: python3 -m teukbo.rail_run
+
       - name: 이력 커밋
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/history data/accuracy.json
+          if [ -d data/rail ]; then git add data/rail; fi
           if git diff --cached --quiet; then
             echo "커밋할 변경이 없습니다."
             exit 0

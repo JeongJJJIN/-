@@ -1,5 +1,6 @@
 # 배포 전용 산출물 (GitHub Pages 로만 올라가고 저장소에는 커밋하지 않음)
 /data/latest.json
+/data/warnings.json
 /data/detail/
 /_site/
 

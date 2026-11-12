@@ -37,8 +37,13 @@ EXIT_NO_FORECAST = 2  # 예측 자료를 하나도 받지 못함 → 아무것�
 Forecasts = dict[str, dict[str, ModelSeries]]  # 모델 id → 지역 id → 예측값
 
 
-def collect(cfg: Config, now: datetime, env: Mapping[str, str]) -> tuple[Forecasts, dict[str, RegionOfficial], dict[str, Any], dict[str, dict[str, Any]]]:
-    """모든 출처에서 자료를 받는다. 한 출처가 실패해도 나머지로 계속한다."""
+def collect(
+    cfg: Config, now: datetime, env: Mapping[str, str]
+) -> tuple[Forecasts, dict[str, RegionOfficial], dict[str, Any], dict[str, dict[str, Any]], list[Any]]:
+    """모든 출처에서 자료를 받는다. 한 출처가 실패해도 나머지로 계속한다.
+
+    반환: (예측값, 지역별 공식 특보, 출처 상태, 모델 상태, 전국 특보 목록)
+    """
     st = cfg.settings
     data_go_kr_key = normalize_service_key(env.get("DATA_GO_KR_SERVICE_KEY"))
     apihub_key = (env.get("KMA_APIHUB_KEY") or "").strip() or None
@@ -75,11 +80,11 @@ def collect(cfg: Config, now: datetime, env: Mapping[str, str]) -> tuple[Forecas
         model_status[kma_model.id] = {"ok": bool(kma_data), "error": kma_status.get("error"), "configured": kma_status.get("configured")}
         sources["kma_forecast"] = kma_status
 
-    official, warn_status = kma_warnings.fetch(
+    official, warn_status, national = kma_warnings.fetch(
         cfg.regions, cfg.thresholds, now, data_go_kr_key=data_go_kr_key, apihub_key=apihub_key, http_opts=st.http
     )
     sources["kma_warnings"] = warn_status
-    return forecasts, official, sources, model_status
+    return forecasts, official, sources, model_status, national
 
 
 def assess_all(cfg: Config, now: datetime, forecasts: Forecasts, official: Mapping[str, RegionOfficial]) -> tuple[list[RegionAssessment], dict[str, dict[str, ModelSeries]]]:
@@ -135,16 +140,20 @@ def _summary(assessments: list[RegionAssessment], sources: dict[str, Any], now: 
 
 
 def run_real(cfg: Config, now: datetime, data_dir: Path, env: Mapping[str, str]) -> int:
-    forecasts, official, sources, model_status = collect(cfg, now, env)
+    forecasts, official, sources, model_status, national = collect(cfg, now, env)
     if not forecasts:
         log.error("예측 자료를 하나도 받지 못했습니다. 결과를 쓰지 않고 종료합니다(이전 배포가 유지됩니다).")
         return EXIT_NO_FORECAST
 
     assessments, by_region = assess_all(cfg, now, forecasts, official)
     write_web_files(cfg, now, assessments, by_region, sources, model_status, data_dir, demo=False)
+    warnings_ok = bool(sources["kma_warnings"].get("ok"))
+    storage.write_json(data_dir / "warnings.json", storage.build_national(national, cfg, now, sources["kma_warnings"]))
 
     history_dir = data_dir / "history"
-    run = storage.build_history_run(assessments, cfg, now, {k: bool(v.get("ok")) for k, v in sources.items()})
+    run = storage.build_history_run(
+        assessments, cfg, now, {k: bool(v.get("ok")) for k, v in sources.items()}, national=national if warnings_ok else None
+    )
     path = storage.append_history(history_dir, run, now)
     log.info("이력 기록: %s", path.relative_to(data_dir.parent) if data_dir.parent in path.parents else path)
 
@@ -177,10 +186,15 @@ def run_demo(cfg: Config, now: datetime, data_dir: Path, days: int) -> int:
         t = now - timedelta(hours=3 * k)
         forecasts, official = demo_mod.generate(cfg, t, events)
         assessments, by_region = assess_all(cfg, t, forecasts, official)
-        storage.append_history(history_dir, storage.build_history_run(assessments, cfg, t, {k2: True for k2 in sources}), t)
+        national = demo_mod.national_raws(cfg, official)
+        storage.append_history(
+            history_dir, storage.build_history_run(assessments, cfg, t, {k2: True for k2 in sources}, national=national), t
+        )
         if k == 0:
             write_web_files(cfg, t, assessments, by_region, sources, model_status, data_dir, demo=True)
+            storage.write_json(data_dir / "warnings.json", storage.build_national(national, cfg, t, sources["kma_warnings"]))
     storage.write_json(data_dir / "accuracy.json", accuracy_mod.compute_accuracy(history_dir, cfg, now), pretty=True)
+    storage.write_json(data_dir / "rail" / "summary.json", demo_mod.rail_summary(cfg, now))
     log.info("데모 자료 생성 완료: %s (실제 예보가 아닙니다)", data_dir)
     return EXIT_OK
 

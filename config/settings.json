@@ -50,5 +50,24 @@
     "sno_over_5cm": 5.0,
     "available_after_minutes": 15
   },
+  "rail": {
+    "_doc": [
+      "열차 지연 집계(전날까지의 공식 운행 기록). back_days: 거슬러 올라가 채울 일수(특보 발표 이력 조회 한도 때문에 59 이하).",
+      "max_days_per_run: 한 번 실행에 새로 처리할 최대 일수(처음에는 여러 번에 나눠 과거분을 채운다).",
+      "train_classes: 열차번호 대역에 따른 열차 종류 구분(관례). 공식 자료에 열차 종류가 없어 번호로 나눈다.",
+      "late_minutes: '지연'으로 세는 기준 분."
+    ],
+    "back_days": 59,
+    "max_days_per_run": 12,
+    "time_budget_seconds": 360,
+    "late_minutes": [5, 10, 20],
+    "train_classes": [
+      {"min": 1, "max": 899, "name": "KTX"},
+      {"min": 1000, "max": 1199, "name": "ITX-새마을·마음"},
+      {"min": 1200, "max": 1999, "name": "무궁화·누리로"},
+      {"min": 2000, "max": 2999, "name": "ITX-청춘"},
+      {"min": 9000, "max": 9999, "name": "SRT"}
+    ]
+  },
   "stale_after_hours": 7
 }

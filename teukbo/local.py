@@ -37,7 +37,7 @@ RETRY_MINUTES = 30
 PORTS = range(8000, 8011)
 GRADE_KO = {"caution": "주의", "high": "높음", "active": "발효 중"}
 # 화면이 읽는 자료만 내보낸다(이력 등 다른 파일은 제외)
-_DATA_FILES = {"latest.json", "accuracy.json"}
+_DATA_FILES = {"latest.json", "accuracy.json", "warnings.json"}
 
 
 # ---------------------------------------------------------------- 인증키
@@ -92,6 +92,8 @@ def resolve_path(url_path: str, web_dir: Path, data_dir: Path) -> Path | None:
         rest = parts[1:]
         if len(rest) == 1 and rest[0] in _DATA_FILES:
             return data_dir / rest[0]
+        if rest == ["rail.json"]:  # 열차 지연 통계 (배포 때는 이 이름으로 복사된다)
+            return data_dir / "rail" / "summary.json"
         if len(rest) == 2 and rest[0] == "detail" and rest[1].endswith(".json"):
             return data_dir / "detail" / rest[1]
         return None

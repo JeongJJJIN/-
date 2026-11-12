@@ -113,6 +113,7 @@ def build_latest(
                 "id": ra.region.id,
                 "name": ra.region.name,
                 "province": ra.region.province,
+                "zones": list(ra.region.zone_codes),
                 "models": ra.models_used,
                 "top": ({"hazard": top.hazard.id, "grade": top.grade, "p": top.probability} if top else None),
                 "official": {
@@ -250,6 +251,57 @@ def build_detail(ra: RegionAssessment, series: dict[str, ModelSeries], cfg: Conf
     }
 
 
+# ---------------------------------------------------------------- warnings.json (전국 특보 현황)
+
+
+def build_national(raws: list[Any], cfg: Config, now: datetime, status: dict[str, Any]) -> dict[str, Any]:
+    """전국 특보·예비특보를 말단 특보구역 코드 단위로 정리한다(지도 표시용).
+
+    raws: sources.kma_warnings.RawWarning 목록. 코드표에서 찾지 못한 구역은 unresolved 에 이름으로 남긴다.
+    """
+    from .sources.kma_warnings import classify  # 순환 참조를 피하려고 여기서 불러온다
+
+    active: list[dict[str, Any]] = []
+    preliminary: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for r in raws:
+        type_id, level_id = classify(r.type_name, r.level_name, cfg.thresholds)
+        if not r.zone_code:
+            unresolved.append({"status": r.status, "name": r.type_name + r.level_name, "zone": r.zone_name, "parent": r.parent_name})
+            continue
+        key = (r.status, r.zone_code, r.type_name, r.level_name, r.expected_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        if r.status == "active":
+            active.append({"code": r.zone_code, "type": type_id, "level": level_id, "name": r.type_name + r.level_name, "from": _t(r.effective_from)})
+        else:
+            preliminary.append({"code": r.zone_code, "type": type_id, "level": level_id, "name": f"{r.type_name} 예비특보", "expected": r.expected_text or None})
+    return {
+        "schema": SCHEMA,
+        "generated_at": iso(now),
+        "available": bool(status.get("ok")),
+        "provider": status.get("provider"),
+        "active": active,
+        "preliminary": preliminary,
+        "unresolved": unresolved,
+    }
+
+
+def _national_for_history(raws: list[Any]) -> dict[str, Any]:
+    """이력용 전국 특보: {a: {특보 이름: [구역 코드…]}, p: {종류: [구역 코드…]}}."""
+    out: dict[str, dict[str, list[str]]] = {"a": {}, "p": {}}
+    for r in raws:
+        if not r.zone_code:
+            continue
+        bucket, name = (out["a"], r.type_name + r.level_name) if r.status == "active" else (out["p"], r.type_name)
+        codes = bucket.setdefault(name, [])
+        if r.zone_code not in codes:
+            codes.append(r.zone_code)
+    return out
+
+
 # ---------------------------------------------------------------- history
 
 
@@ -262,6 +314,7 @@ def build_history_run(
     cfg: Config,
     now: datetime,
     sources_ok: dict[str, bool],
+    national: list[Any] | None = None,
 ) -> dict[str, Any]:
     """이력 한 회차. 용량을 줄이려고 지표 값은 'ind' 순서의 배열로, 가능성 0% 인 특보는 생략한다.
 
@@ -269,6 +322,7 @@ def build_history_run(
     regions[지역].h[특보]  = {p: 가능성, mg: 모델 등급, g: 최종 등급, r: [모델별 도달률…('models' 순서)], w: [시작, 끝]}
     regions[지역].a       = 발효 중 특보 [{k: 종류, l: 단계, n: 이름, f: 발효 시각}]
     regions[지역].pre     = 예비특보 [{k, l, n, e: 예상 시점 문구}]
+    nat                  = 전국 특보 {a: {특보 이름: [구역 코드…]}, p: {예비특보 종류: [구역 코드…]}} (특보 조회 성공 시에만)
     """
     order = _history_indicator_order(cfg)
     model_ids = [m.id for m in cfg.settings.models]
@@ -299,7 +353,7 @@ def build_history_run(
                 for w in ra.official.preliminary
             ]
         regions[ra.region.id] = rec
-    return {
+    run: dict[str, Any] = {
         "t": iso(now),
         "ok": sources_ok,
         "models": model_ids,
@@ -307,6 +361,9 @@ def build_history_run(
         "thresholds": cfg.thresholds.version,
         "regions": regions,
     }
+    if national is not None:
+        run["nat"] = _national_for_history(national)
+    return run
 
 
 def history_path(history_dir: Path, day: str) -> Path:
