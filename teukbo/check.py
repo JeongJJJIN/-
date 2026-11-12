@@ -159,8 +159,6 @@ def check_korail(key: str, now, opts: dict) -> None:
         print(f"  실패  코드 stn_cd: {e}")
 
 
-if __name__ == "__main__":
-    sys.exit(main())
 
 
 def check_rail_day(key: str, now, cfg) -> None:
@@ -171,19 +169,24 @@ def check_rail_day(key: str, now, cfg) -> None:
 
     from . import rail, rail_run
 
-    print("열차 지연 집계 시험 (어제 하루, 특보 이력 최근 7일)")
+    print("열차 지연 집계 시험 (가장 최근 하루, 특보 이력 최근 7일)")
     tmp = Path(tempfile.mkdtemp())
     days = rail.window_days(now, 7)
     try:
         events = rail_run.refresh_events(tmp, key, days, now, cfg.settings.http)
         intervals = rail.build_intervals(events)
         print(f"  정상  특보 발표 이력 {len(events)}건 → 발효 구간 {len(intervals)}개: " + ", ".join(f"{k} {v}" for k, v in Counter(i.type_name + i.level_name for i in intervals).most_common(12)))
-        day = rail_run.process_day(cfg, key, days[0], rail.WarningTimeline(intervals), rail_run.load_station_zones(), now)
+        day = None
+        for ymd in days[:3]:  # 전날 기록은 다음 날 새벽~오전에 올라온다. 아직 없으면 그 전날로 시험한다
+            day = rail_run.process_day(cfg, key, ymd, rail.WarningTimeline(intervals), rail_run.load_station_zones(), now)
+            if day is not None:
+                break
+            print(f"        {ymd} 운행 기록은 아직 제공되지 않습니다")
     except FetchError as e:
         print(f"  실패  {e}")
         return
     if day is None:
-        print(f"  실패  {days[0]} 운행 기록이 아직 없습니다")
+        print("  실패  최근 3일의 운행 기록이 없습니다")
         return
     print(f"  정상  {day['date']} 열차 수 {day['counts']}")
     print(f"        전체 {day['all']}")
@@ -198,3 +201,6 @@ def check_rail_day(key: str, now, cfg) -> None:
     unmatched = day.get("unmatched_stations") or {}
     print(f"        특보구역을 찾지 못한 역 {len(unmatched)}곳: {unmatched or '없음'}")
 
+
+if __name__ == "__main__":
+    sys.exit(main())

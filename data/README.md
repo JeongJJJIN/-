@@ -52,6 +52,7 @@
 {
   "schema": 1,
   "date": "2026-11-11",
+  "final": true,                       // false = 그날이 끝난 지 하루가 안 되어 다시 확인할 파일
   "counts": {"planned": 863, "recorded": 860, "measured": 858, "no_record": 3, "no_terminus": 2},
   "all": {"n": 858, "mean": 2.4, "median": 1.0, "max": 47, "late5": 96, "late10": 31, "late20": 8},  // 종착 지연(분)
   "clear": {…},                       // 특보 구간을 지나지 않은 열차

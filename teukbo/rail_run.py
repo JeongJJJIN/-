@@ -9,6 +9,9 @@
 아직 처리하지 않은 날이 있으면 한 번에 max_days_per_run 일씩, time_budget_seconds 안에서 채운다
 (처음 며칠 동안 과거분이 차례로 쌓인다). 기상 수집·배포를 늦추지 않으려는 것이다.
 인증키가 없거나 코레일 API 활용신청이 안 되어 있으면 아무것도 하지 않고 정상 종료한다.
+
+전날 기록은 다음 날 새벽~오전에 올라온다(자정 직후에는 아직 없다). 올라오는 도중에 받아 일부만 담겼을 수 있으므로,
+그날이 끝나고 하루가 더 지나기 전에 만든 파일은 '확정 전'(final=false)으로 두고 실행 때마다 다시 받아 달라졌으면 고친다.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -115,6 +118,16 @@ def load_events(data_dir: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------- 하루 처리
 
 
+def is_final(ymd: str, now: datetime) -> bool:
+    """그날이 끝나고 하루가 더 지났으면 확정으로 본다(운행 기록이 다 올라왔다고 볼 수 있는 때)."""
+    return (now.date() - date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:]))).days >= 2
+
+
+def _same_content(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    skip = ("built_at", "final")
+    return {k: v for k, v in a.items() if k not in skip} == {k: v for k, v in b.items() if k not in skip}
+
+
 def process_day(cfg: Config, key: str, ymd: str, timeline: rail.WarningTimeline, stations: tuple[dict, dict], now: datetime) -> dict[str, Any] | None:
     """그날의 운행계획·운행 기록을 받아 요약을 만든다. 아직 자료가 없으면 None."""
     http_opts = cfg.settings.http
@@ -122,12 +135,15 @@ def process_day(cfg: Config, key: str, ymd: str, timeline: rail.WarningTimeline,
     if not info:
         return None
     plan = korail.fetch_run_plan(key, ymd, http_opts)
+    if not plan:
+        return None  # 계획 시각이 없으면 지연을 계산할 수 없다(자료가 올라오는 중)
     runs = rail.build_runs(plan, info)
     level_rank = {str(v["name"]): int(v["rank"]) for v in cfg.thresholds.levels.values()}
     unmatched = rail.attach_warnings(runs, timeline, stations[0], level_rank, stations[1])
     settings = cfg.settings.raw.get("rail", {})
     day = rail.summarize_day(ymd, runs, settings.get("train_classes", []), now)
     day["unmatched_stations"] = dict(unmatched.most_common(40))
+    day["final"] = is_final(ymd, now)
     return day
 
 
@@ -168,7 +184,9 @@ def run(cfg: Config, now: datetime, data_dir: Path, env: Mapping[str, str], max_
     budget = float(settings.get("time_budget_seconds", 360))
     started = time.monotonic()
     days = rail.window_days(now, back)
-    todo = [d for d in days if not day_path(data_dir, d).exists()][:limit]
+    # 확정 전인 최근 날은 매번 다시 확인하고(한도에 넣지 않는다), 아직 없는 날은 최근 날짜부터 한도만큼 채운다
+    recheck = [d for d in days[:3] if not (storage.read_json(day_path(data_dir, d)) or {"final": True}).get("final", True)]
+    todo = recheck + [d for d in days if not day_path(data_dir, d).exists()][:limit]
     if not todo:
         log.info("새로 처리할 날이 없습니다.")
     else:
@@ -195,6 +213,9 @@ def run(cfg: Config, now: datetime, data_dir: Path, env: Mapping[str, str], max_
             if day is None:
                 log.info("열차 운행 기록 %s: 아직 제공되지 않음", ymd)
                 continue
+            previous = storage.read_json(day_path(data_dir, ymd))
+            if previous and _same_content(previous, day) and bool(previous.get("final", True)) == day["final"]:
+                continue  # 다시 확인했지만 달라진 것이 없다
             storage.write_json(day_path(data_dir, ymd), day)
             done += 1
             unmatched = day.get("unmatched_stations") or {}

@@ -318,7 +318,43 @@ class RailRunTest(unittest.TestCase):
         self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=1)
         self.calls["info"].clear()
         self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=2)
-        self.assertEqual(self.calls["info"], ["20261110", "20261109"])  # 이미 만든 11일은 건너뛴다
+        # 어제(11일)는 아직 확정 전이라 다시 확인하고, 그와 별도로 없는 날을 2일 더 채운다
+        self.assertEqual(self.calls["info"], ["20261111", "20261110", "20261109"])
+
+    def test_recent_day_is_rechecked_until_final(self):
+        from teukbo.sources import korail
+
+        self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=2)
+        self.assertFalse(self._day("2026-11-11.json")["final"])  # 어제 → 확정 전
+        self.assertTrue(self._day("2026-11-10.json")["final"])  # 그저께 → 확정
+        built = self._day("2026-11-11.json")["built_at"]
+
+        # 같은 날 다시 실행: 내용이 같으면 파일을 건드리지 않는다(쓸데없는 커밋 방지)
+        self.calls["info"].clear()
+        self.rail_run.run(self.cfg, kst(2026, 11, 12, 8, 30), self.dir, self.env, max_days=0)
+        self.assertEqual(self.calls["info"], ["20261111"])
+        self.assertEqual(self._day("2026-11-11.json")["built_at"], built)
+
+        # 뒤늦게 기록이 더 올라오면(도착 시각이 바뀜) 고쳐 쓴다
+        with self.mock.patch.object(korail, "fetch_run_info", side_effect=lambda _k, ymd, _o=None: ktx501("08:35") if ymd == "20261111" else []):
+            self.rail_run.run(self.cfg, kst(2026, 11, 12, 11, 30), self.dir, self.env, max_days=0)
+            day = self._day("2026-11-11.json")
+            self.assertEqual(dict(zip(day["fields"], day["trains"][0]))["arr_delay"], 30)
+            self.assertFalse(day["final"])
+            # 하루가 더 지나면 한 번 더 확인하고 확정한다
+            self.rail_run.run(self.cfg, kst(2026, 11, 13, 5, 30), self.dir, self.env, max_days=0)
+            self.assertTrue(self._day("2026-11-11.json")["final"])
+        # 확정된 날은 다시 받지 않는다
+        self.calls["info"].clear()
+        self.rail_run.run(self.cfg, kst(2026, 11, 13, 8, 30), self.dir, self.env, max_days=0)
+        self.assertNotIn("20261111", self.calls["info"])
+
+    def test_day_without_plan_is_not_saved(self):
+        from teukbo.sources import korail
+
+        with self.mock.patch.object(korail, "fetch_run_plan", return_value=[]):
+            self.rail_run.run(self.cfg, self.now, self.dir, self.env, max_days=1)
+        self.assertFalse((self.dir / "rail" / "days" / "2026-11-11.json").exists())  # 올라오는 중인 자료로 파일을 만들지 않는다
 
     def test_time_budget_leaves_the_rest_for_next_run(self):
         from teukbo import rail_run as real
