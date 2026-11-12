@@ -178,6 +178,78 @@ class SourceCheckTest(unittest.TestCase):
         self.assertIn("없는 변수: gust", out.getvalue())  # JMA 는 돌풍 자료가 없다
 
 
+class LocalModeTest(unittest.TestCase):
+    """내 컴퓨터용 실행기(teukbo.local)."""
+
+    def setUp(self):
+        from teukbo import local
+
+        self.local = local
+        self.web = Path("/srv/web")
+        self.data = Path("/srv/data")
+
+    def test_paths_served(self):
+        r = lambda p: self.local.resolve_path(p, self.web, self.data)  # noqa: E731
+        self.assertEqual(r("/"), self.web / "index.html")
+        self.assertEqual(r("/app.js?v=__BUILD__"), self.web / "app.js")
+        self.assertEqual(r("/icons/icon-192.png"), self.web / "icons" / "icon-192.png")
+        self.assertEqual(r("/data/latest.json"), self.data / "latest.json")
+        self.assertEqual(r("/data/accuracy.json"), self.data / "accuracy.json")
+        self.assertEqual(r("/data/detail/suncheon.json"), self.data / "detail" / "suncheon.json")
+
+    def test_paths_refused(self):
+        r = lambda p: self.local.resolve_path(p, self.web, self.data)  # noqa: E731
+        for path in (
+            "/data/history/2026-11-12.json",  # 이력은 화면에 필요 없다
+            "/data/../local_keys.txt",
+            "/../local_keys.txt",
+            "/%2e%2e/local_keys.txt",
+            "/data/detail/../../config/settings.json",
+            "/data/detail/x.txt",
+            "/C:/Windows/win.ini",
+            "/..\\local_keys.txt",
+        ):
+            self.assertIsNone(r(path), path)
+
+    def test_key_file_round_trip(self):
+        path = Path(tempfile.mkdtemp()) / "local_keys.txt"
+        self.assertEqual(self.local.read_keys(path), {})
+        self.local.write_keys(path, {"DATA_GO_KR_SERVICE_KEY": "abc+def==", "KMA_APIHUB_KEY": ""})
+        self.assertEqual(self.local.read_keys(path), {"DATA_GO_KR_SERVICE_KEY": "abc+def==", "KMA_APIHUB_KEY": ""})
+        path.write_text("\ufeff# 메모\nDATA_GO_KR_SERVICE_KEY = xyz \nOTHER=1\n", encoding="utf-8")  # 메모장이 붙이는 BOM, 공백
+        self.assertEqual(self.local.read_keys(path), {"DATA_GO_KR_SERVICE_KEY": "xyz"})
+
+    def test_server_serves_site_and_blocks_other_files(self):
+        import urllib.error
+        import urllib.request
+
+        root = Path(tempfile.mkdtemp())
+        (root / "web").mkdir()
+        (root / "web" / "index.html").write_text("<p>ok</p>", encoding="utf-8")
+        (root / "data").mkdir()
+        (root / "data" / "latest.json").write_text("{}", encoding="utf-8")
+        (root / "secret.txt").write_text("x", encoding="utf-8")
+        server, port = self.local.start_server(root / "web", root / "data", range(8650, 8660))
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self.assertEqual(server.server_address[0], "127.0.0.1")  # 이 컴퓨터에서만 접속 가능
+        self.assertEqual(opener.open(f"http://127.0.0.1:{port}/").read(), b"<p>ok</p>")
+        self.assertEqual(opener.open(f"http://127.0.0.1:{port}/data/latest.json").read(), b"{}")
+        with self.assertRaises(urllib.error.HTTPError):
+            opener.open(f"http://127.0.0.1:{port}/data/secret.txt")
+
+    def test_gitignore_covers_local_keys(self):
+        self.assertIn("/local_keys.txt", (ROOT / ".gitignore").read_text(encoding="utf-8"))
+
+    def test_windows_launcher_is_ascii_with_crlf(self):
+        raw = (ROOT / "start.bat").read_bytes()
+        raw.decode("ascii")  # 한글이 섞이면 명령 프롬프트 인코딩에 따라 깨질 수 있다
+        self.assertIn(b"\r\n", raw)
+        self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+        self.assertIn(b"-m teukbo.local", raw)
+
+
 class RepositoryHygieneTest(unittest.TestCase):
     def test_no_secrets_or_keys_in_tracked_config(self):
         for path in (ROOT / "config").glob("*.json"):

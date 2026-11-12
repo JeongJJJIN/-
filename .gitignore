@@ -6,6 +6,9 @@
 # 데모(가상) 자료
 /data-demo/
 
+# 내 컴퓨터용 인증키 (절대 커밋하지 않음)
+/local_keys.txt
+
 __pycache__/
 *.pyc
 .pytest_cache/
