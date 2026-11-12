@@ -1,0 +1,81 @@
+name: 수집·계산·배포
+
+# 3시간마다: 예보 수집 → 가능성 계산 → 이력 커밋 → GitHub Pages 배포
+# 예약 실행은 기본 브랜치(main)에서만 동작합니다.
+
+on:
+  schedule:
+    # 기상청 단기예보 발표(02·05·08·11·14·17·20·23시 KST, 발표 10분 뒤 제공) 약 25분 뒤에 맞춤.
+    # cron 은 UTC 기준입니다 (KST = UTC + 9시간). GitHub 사정으로 수 분~수십 분 늦게 시작될 수 있습니다.
+    - cron: "25 2,5,8,11,14,17,20,23 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "teukbo/**"
+      - "config/**"
+      - ".github/workflows/collect.yml"
+
+permissions:
+  contents: write # data/history 이력 커밋
+  pages: write # GitHub Pages 배포
+  id-token: write
+
+# 동시에 두 번 돌지 않게 한다(이력 커밋 충돌 방지). 진행 중인 실행은 끝까지 둔다.
+concurrency:
+  group: collect-and-deploy
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: 수집·계산
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 수집·계산 (표준 라이브러리만 사용 — 설치할 패키지 없음)
+        env:
+          # 인증키는 저장소 Settings → Secrets and variables → Actions 에 등록합니다. 없으면 해당 출처만 건너뜁니다.
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+          KMA_APIHUB_KEY: ${{ secrets.KMA_APIHUB_KEY }}
+        run: python3 -m teukbo.run
+
+      - name: 이력 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/history data/accuracy.json
+          if git diff --cached --quiet; then
+            echo "커밋할 변경이 없습니다."
+            exit 0
+          fi
+          git commit -m "data: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M') KST 수집"
+          for attempt in 1 2 3 4; do
+            if git push; then exit 0; fi
+            echo "push 실패 — 원격 변경을 받아 다시 시도합니다 (${attempt}/4)"
+            sleep $((attempt * 5))
+            git pull --rebase
+          done
+          echo "::error::이력을 push 하지 못했습니다."
+          exit 1
+
+      - name: 사이트 조립 (web/ + 최신 결과)
+        run: python3 -m teukbo.site --out _site
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    name: GitHub Pages 배포
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
