@@ -52,7 +52,9 @@ def collect(
     model_status: dict[str, dict[str, Any]] = {}
 
     om_models = [m for m in st.models if m.source == "open_meteo"]
-    om_data, om_errors = open_meteo.fetch_all(cfg.regions, om_models, st.past_hours, st.forecast_hours, st.http)
+    fetch = st.raw.get("fetch", {})
+    om_data, om_errors = open_meteo.fetch_all(cfg.regions, om_models, st.past_hours, st.forecast_hours, st.http,
+                                             chunk=int(fetch.get("open_meteo_chunk", 0)), pause=float(fetch.get("open_meteo_pause_seconds", 0)))
     forecasts.update(om_data)
     for m in om_models:
         model_status[m.id] = {"ok": m.id in om_data, "error": om_errors.get(m.id)}

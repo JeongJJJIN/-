@@ -31,7 +31,49 @@ class RegionsTest(unittest.TestCase):
         ids = {r.id for r in config().regions}
         self.assertIn("suncheon", ids)
         self.assertIn("beolgyo", ids)
-        self.assertEqual(len(config().regions), 23)  # 전남 22개 시·군 + 벌교
+        self.assertEqual(sum(1 for r in config().regions if not r.id.startswith("L")), 23)  # 손으로 다듬은 전남 22개 시·군 + 벌교
+        self.assertEqual(len(config().regions), 226)  # 전국: 전남 23곳 + 그 밖의 특보구역 203곳
+
+    def test_regions_cover_the_whole_country(self):
+        provinces = {r.province for r in config().regions}
+        self.assertEqual(provinces, {"서울", "인천", "경기", "강원", "대전", "세종", "충남", "충북", "광주", "전남", "전북", "대구", "경북", "부산", "울산", "경남", "제주"})
+        by_name = {r.name: r for r in config().regions}
+        self.assertEqual(len(by_name), len(config().regions))  # 이름이 겹치지 않는다(찾기에서 헷갈리지 않게)
+        for name in ("서울동남권", "파주시동북부", "강릉시산지", "울릉도.독도", "세종북부", "제주도산지", "백령도.대청도", "부산동부"):
+            self.assertIn(name, by_name)
+        # 세분된 구역은 그 위의 시·군 코드도 함께 가진다(시·군 전체에 내려진 특보를 놓치지 않게)
+        self.assertEqual(by_name["파주시동북부"].zone_codes, ("L1013710", "L1013700"))
+        self.assertEqual(by_name["파주시동북부"].group_codes, ("L1010000",))
+        self.assertEqual(by_name["광주시"].province, "경기")
+        self.assertNotIn("광주", by_name["광주서부"].group_names)  # 경기도 광주시와 이름이 겹치므로 광역시는 정식 이름만
+
+    def test_mountain_zones_use_mountain_criteria(self):
+        cfg = config()
+        by_name = {r.name: r for r in cfg.regions}
+
+        def values(hazard_id, region):
+            hazard = next(h for h in cfg.thresholds.hazards if h.id == hazard_id)
+            return [leaf.threshold_for(region) for leaf in hazard.leaves()]
+
+        self.assertEqual(values("strong_wind_advisory", by_name["강릉시산지"]), [17, 25])  # 산지: 풍속 17m/s · 순간풍속 25m/s
+        self.assertEqual(values("strong_wind_advisory", by_name["강릉시평지"]), [14, 20])
+        self.assertEqual(values("strong_wind_warning", by_name["강릉시산지"]), [24, 30])
+        self.assertEqual(values("heavy_snow_warning", by_name["강릉시산지"]), [30])
+        self.assertEqual(values("heavy_snow_warning", by_name["순천시"]), [20])
+        self.assertEqual(sum(1 for r in cfg.regions if r.name.endswith("산지")), 15)
+        self.assertEqual(by_name["제주도산지"].params["tropical_night_min"], 27)
+        self.assertEqual(by_name["서울동남권"].params["tropical_night_min"], 26)
+
+    def test_region_list_matches_the_generator(self):
+        """config/regions.json 은 tools/build_regions.py 가 만든 그대로여야 한다(구역표가 바뀌면 다시 돌린다)."""
+        import importlib.util
+
+        from teukbo.config import ROOT
+
+        spec = importlib.util.spec_from_file_location("build_regions", ROOT / "tools" / "build_regions.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.dump(module.build()), (ROOT / "config" / "regions.json").read_text(encoding="utf-8"))
 
     def test_zone_codes(self):
         by_id = {r.id: r for r in config().regions}
@@ -41,9 +83,11 @@ class RegionsTest(unittest.TestCase):
         for r in config().regions:
             self.assertTrue(r.zone_codes, r.name)
             self.assertEqual(len(r.zone_codes), len(r.zone_names), r.name)
-            self.assertIn("전라남도", r.group_names)
+            self.assertTrue(r.group_names and r.group_codes and r.province, r.name)
             for code in r.zone_codes:
-                self.assertRegex(code, r"^L105\d{4}$")
+                self.assertRegex(code, r"^L1\d{6}$")
+            if not r.id.startswith("L"):
+                self.assertIn("전라남도", r.group_names)
 
     def test_tropical_night_regional_threshold(self):
         by_id = {r.id: r for r in config().regions}

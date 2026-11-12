@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import re
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
@@ -25,6 +27,8 @@ from ..indicators import HOUR, ModelSeries
 from ..timeutil import KST
 
 log = logging.getLogger("teukbo.kma_forecast")
+
+WORKERS = 6  # 동시에 받는 격자 수
 
 DATA_GO_KR_URL = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
 APIHUB_URL = "https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getVilageFcst"
@@ -194,23 +198,44 @@ def _fetch_provider(
     if base is None:
         raise last_error or FetchError("단기예보: 조회 가능한 발표시각이 없습니다")
 
+    # 나머지 격자는 몇 개씩 동시에 받는다(전국은 격자가 200곳이 넘는다).
+    # 계속 실패하면 오래 붙잡지 않고 다음 제공처로 넘어간다 — 한도를 넘는 순간 남은 요청은 보내지 않는다.
+    limit = max(2, len(grid_list) // 4)
+    stop = threading.Event()
+
+    def one(grid: tuple[int, int]) -> tuple[tuple[int, int], ModelSeries | None, FetchError | None]:
+        if stop.is_set():
+            return grid, None, FetchError("중단")
+        try:
+            return grid, parse_items(_fetch_grid(url, key_param, key, base, *grid, http_opts, retries=min(retries, 2)), model_id, conv), None
+        except FetchError as e:
+            return grid, None, e
+
     out: dict[str, ModelSeries] = {}
     failed = 0
-    for i, grid in enumerate(grid_list):
-        try:
-            items = first_items if i == 0 else _fetch_grid(url, key_param, key, base, *grid, http_opts, retries=min(retries, 2))
-            series = parse_items(items, model_id, conv)
-        except FetchError as e:
-            failed += 1
-            log.warning("단기예보 격자 %s 실패: %s", grid, e)
-            if failed > max(2, len(grid_list) // 4):  # 계속 실패하면 오래 붙잡지 않고 다음 제공처로 넘어간다
-                raise FetchError(f"단기예보: 격자 {failed}곳 실패로 중단 (마지막 오류: {e})") from e
-            continue
-        if series is None:
-            failed += 1
-            continue
-        for r in grids[grid]:
-            out[r.id] = ModelSeries(model_id=model_id, times=series.times, values=series.values)
+    last: FetchError | None = None
+    try:
+        first: tuple[tuple[int, int], ModelSeries | None, FetchError | None] = (grid_list[0], parse_items(first_items, model_id, conv), None)
+    except FetchError as e:
+        first = (grid_list[0], None, e)
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        for grid, series, error in [first, *pool.map(one, grid_list[1:])]:
+            if error is not None:
+                if stop.is_set():
+                    continue
+                failed += 1
+                last = error
+                log.warning("단기예보 격자 %s 실패: %s", grid, error)
+                if failed > limit:
+                    stop.set()
+                continue
+            if series is None:
+                failed += 1
+                continue
+            for r in grids[grid]:
+                out[r.id] = ModelSeries(model_id=model_id, times=series.times, values=series.values)
+    if stop.is_set():
+        raise FetchError(f"단기예보: 격자 {failed}곳 실패로 중단 (마지막 오류: {last})") from last
     if not out:
         raise FetchError("단기예보: 사용할 수 있는 자료가 없습니다")
     return out, f"{base[0]} {base[1]}"

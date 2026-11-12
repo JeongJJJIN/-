@@ -70,6 +70,26 @@ class HistoryFileTest(unittest.TestCase):
         self.assertNotIn("heavy_snow_advisory", rec["h"])  # 가능성 0% 는 생략
         self.assertEqual(rec["a"], [{"k": "strong_wind", "l": "advisory", "n": "강풍주의보", "f": "2026-11-12T18:00+09:00"}])
 
+    def test_quiet_regions_keep_grades_but_drop_raw_extremes(self):
+        """전국으로 넓히며: 어느 기준에도 한참 못 미친 조용한 지역은 모델별 극값을 남기지 않는다(등급·특보 기록은 남는다)."""
+        now = kst(2026, 11, 12, 21)
+        calm = {"ecmwf_ifs025": series("ecmwf_ifs025", now, precip=const(0.0), temp=const(10.0), wind=const(2.0))}
+        wet = {"ecmwf_ifs025": series("ecmwf_ifs025", now, precip=burst(25.0, 10, 3), temp=const(10.0), wind=const(2.0))}
+        known = RegionOfficial(available=True)
+        run = storage.build_history_run([assess_region(region("suncheon"), calm, known, CFG, now), assess_region(region("mokpo"), wet, known, CFG, now)], CFG, now, {"open_meteo": True})
+        quiet, busy = run["regions"]["suncheon"], run["regions"]["mokpo"]
+        self.assertEqual((quiet.get("q"), "x" in quiet, quiet["h"], quiet["a"], quiet["pre"]), (1, False, {}, [], []))
+        self.assertIn("x", busy)
+        self.assertNotIn("q", busy)
+        self.assertLess(len(json.dumps(quiet)), 60)
+        # 조용해도 공식 특보·예비특보가 있으면 극값을 남긴다
+        th = CFG.thresholds
+        warned = RegionOfficial(available=True, preliminary=[OfficialWarning("preliminary", "heavy_rain", th.type_name("heavy_rain"), None, "예비")])
+        self.assertIn("x", storage.build_history_run([assess_region(region("suncheon"), calm, warned, CFG, now)], CFG, now, {})["regions"]["suncheon"])
+        # 적중률: 조용해서 극값을 생략한 회차도 '예측이 있었다(낮음)'로 센다 — 놓친 특보로 잡힌다
+        self.assertEqual(accuracy._model_grade({"regions": {"suncheon": quiet}}, "suncheon", "heavy_rain_advisory"), "low")
+        self.assertIsNone(accuracy._model_grade({"regions": {"suncheon": {"h": {}}}}, "suncheon", "heavy_rain_advisory"))
+
     def test_unavailable_warnings_are_not_recorded_as_none(self):
         now = kst(2026, 11, 12, 21)
         models = {"ecmwf_ifs025": series("ecmwf_ifs025", now, precip=const(0.0))}

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any, Sequence
 
@@ -80,26 +81,50 @@ def parse_response(payload: Any, regions: Sequence[Region], model_id: str) -> di
     return out
 
 
+def _pause(seconds: float) -> None:
+    time.sleep(seconds)
+
+
 def fetch_model(
     regions: Sequence[Region],
     model: ModelDef,
     past_hours: int,
     forecast_hours: int,
     http_opts: dict[str, Any] | None = None,
+    chunk: int = 0,
+    pause: float = 0.0,
 ) -> dict[str, ModelSeries]:
-    """한 모델의 전 지역 예측을 받아 온다. 실패하면 FetchError."""
+    """한 모델의 전 지역 예측을 받아 온다.
+
+    지역이 많으면 chunk 곳씩 나눠 받고 요청 사이에 pause 초 쉰다 — 무료 API 는 지점 하나를 호출 한 번으로 세고
+    분당 한도가 있다. 일부 묶음만 실패하면 받은 지역만 돌려준다(그 지역들은 이 모델 없이 계산된다).
+    하나도 못 받으면 FetchError. 한도 초과(429)를 만나면 남은 묶음은 보내지 않는다.
+    """
     opts = http_opts or {}
-    payload = get_json(
-        ENDPOINT,
-        build_params(regions, model.id, past_hours, forecast_hours),
-        timeout=float(opts.get("timeout_seconds", 30)),
-        retries=int(opts.get("retries", 3)),
-        backoff=float(opts.get("backoff_seconds", 3)),
-        label=f"open-meteo:{model.id}",
-    )
-    result = parse_response(payload, regions, model.id)
+    parts = [regions[i:i + chunk] for i in range(0, len(regions), chunk)] if chunk and len(regions) > chunk else [regions]
+    result: dict[str, ModelSeries] = {}
+    errors: list[str] = []
+    for index, part in enumerate(parts):
+        if index and pause > 0:
+            _pause(pause)
+        try:
+            payload = get_json(
+                ENDPOINT,
+                build_params(part, model.id, past_hours, forecast_hours),
+                timeout=float(opts.get("timeout_seconds", 30)),
+                retries=int(opts.get("retries", 3)),
+                backoff=float(opts.get("backoff_seconds", 3)),
+                label=f"open-meteo:{model.id}",
+            )
+            result.update(parse_response(payload, part, model.id))
+        except FetchError as e:
+            errors.append(str(e))
+            if getattr(e, "status", None) == 429:
+                break
     if not result:
-        raise FetchError(f"open-meteo[{model.id}]: 사용할 수 있는 자료가 없습니다")
+        raise FetchError(errors[0] if errors else f"open-meteo[{model.id}]: 사용할 수 있는 자료가 없습니다")
+    if errors:
+        log.warning("open-meteo %s: 일부 지역만 받았습니다(%d/%d곳) — %s", model.id, len(result), len(regions), errors[0])
     return result
 
 
@@ -109,16 +134,20 @@ def fetch_all(
     past_hours: int,
     forecast_hours: int,
     http_opts: dict[str, Any] | None = None,
+    chunk: int = 0,
+    pause: float = 0.0,
 ) -> tuple[dict[str, dict[str, ModelSeries]], dict[str, str]]:
-    """여러 모델을 차례로 받는다(무료 API 는 동시 요청을 하나씩만 처리).
+    """여러 모델을 차례로 받는다(무료 API 는 동시 요청을 하나씩만 처리). chunk·pause 는 fetch_model 참고.
 
     반환: (모델 id → 지역 id → ModelSeries, 모델 id → 오류 메시지)
     """
     data: dict[str, dict[str, ModelSeries]] = {}
     errors: dict[str, str] = {}
-    for model in models:
+    for index, model in enumerate(models):
+        if index and pause > 0 and chunk and len(regions) > chunk:
+            _pause(pause)
         try:
-            data[model.id] = fetch_model(regions, model, past_hours, forecast_hours, http_opts)
+            data[model.id] = fetch_model(regions, model, past_hours, forecast_hours, http_opts, chunk, pause)
             log.info("open-meteo %s: %d개 지역 수신", model.id, len(data[model.id]))
         except FetchError as e:
             errors[model.id] = str(e)

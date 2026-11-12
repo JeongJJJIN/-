@@ -106,8 +106,8 @@ def _run_at_lead(runs: list[dict[str, Any]], event_time: datetime, lead_h: float
 
 def _model_grade(run: dict[str, Any], region: str, hazard_id: str) -> str | None:
     rec = run.get("regions", {}).get(region)
-    if rec is None or not rec.get("x"):
-        return None  # 그 회차에 이 지역 예측 자료가 없었다
+    if rec is None or not (rec.get("x") or rec.get("q")):
+        return None  # 그 회차에 이 지역 예측 자료가 없었다 (q: 예측은 있었지만 조용해서 극값을 생략한 지역)
     return rec.get("h", {}).get(hazard_id, {}).get("mg", "low")
 
 

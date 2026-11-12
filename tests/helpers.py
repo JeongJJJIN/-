@@ -18,6 +18,15 @@ def config() -> Config:
     return load_config()
 
 
+@lru_cache(maxsize=1)
+def small_config() -> Config:
+    """손으로 다듬은 지역(전남 23곳)만 담은 설정 — 수집·계산 전체를 돌리는 테스트가 전국 226곳을 매번 계산하지 않게."""
+    import dataclasses
+
+    full = config()
+    return dataclasses.replace(full, regions=tuple(r for r in full.regions if not r.id.startswith("L")))
+
+
 def kst(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
     return datetime(year, month, day, hour, minute, tzinfo=KST)
 

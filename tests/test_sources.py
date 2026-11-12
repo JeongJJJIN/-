@@ -99,6 +99,49 @@ class OpenMeteoTest(unittest.TestCase):
         self.assertEqual(list(data), [models[1].id])
         self.assertIn(models[0].id, errors)
 
+    def test_many_regions_are_fetched_in_paced_chunks(self):
+        """전국처럼 지역이 많으면 몇 곳씩 나눠, 사이사이 쉬어 가며 받는다(무료 API 의 분당 한도)."""
+        model = next(m for m in CFG.settings.models if m.source == "open_meteo")
+        regions = list(CFG.regions[:5])
+        sizes, pauses = [], []
+
+        def fake(_url, params, **_kw):
+            n = params["latitude"].count(",") + 1
+            sizes.append(n)
+            return [self._loc() for _ in range(n)] if n > 1 else self._loc()
+
+        with mock.patch.object(open_meteo, "get_json", side_effect=fake), mock.patch.object(open_meteo, "_pause", side_effect=pauses.append):
+            data = open_meteo.fetch_model(regions, model, 36, 72, chunk=2, pause=6)
+        self.assertEqual(sizes, [2, 2, 1])
+        self.assertEqual(pauses, [6, 6])  # 첫 요청 앞에서는 쉬지 않는다
+        self.assertEqual(set(data), {r.id for r in regions})
+        # 나눌 필요가 없으면 한 번에
+        sizes.clear()
+        with mock.patch.object(open_meteo, "get_json", side_effect=fake), mock.patch.object(open_meteo, "_pause", side_effect=pauses.append):
+            open_meteo.fetch_model(regions, model, 36, 72, chunk=50, pause=6)
+        self.assertEqual(sizes, [5])
+
+    def test_partial_chunks_are_kept_and_rate_limit_stops_early(self):
+        model = next(m for m in CFG.settings.models if m.source == "open_meteo")
+        regions = list(CFG.regions[:6])
+        calls = []
+
+        def fake(_url, params, **_kw):
+            calls.append(params["latitude"])
+            if len(calls) == 2:
+                raise FetchError("open-meteo: HTTP 429 Daily API request limit exceeded", status=429)
+            return [self._loc(), self._loc()]
+
+        with mock.patch.object(open_meteo, "get_json", side_effect=fake), mock.patch.object(open_meteo, "_pause"):
+            data = open_meteo.fetch_model(regions, model, 36, 72, chunk=2, pause=1)
+        self.assertEqual(set(data), {r.id for r in regions[:2]})  # 받은 묶음은 쓴다
+        self.assertEqual(len(calls), 2)  # 한도 초과를 만나면 남은 묶음은 보내지 않는다
+        with mock.patch.object(open_meteo, "get_json", side_effect=FetchError("open-meteo: HTTP 500")), mock.patch.object(open_meteo, "_pause"):
+            with self.assertRaises(FetchError):
+                open_meteo.fetch_model(regions, model, 36, 72, chunk=2, pause=1)  # 하나도 못 받으면 실패
+        fetch = CFG.settings.raw["fetch"]
+        self.assertLessEqual(fetch["open_meteo_chunk"] * 60 / fetch["open_meteo_pause_seconds"], 600)  # 분당 600곳을 넘지 않게
+
 
 # ---------------------------------------------------------------- 단기예보
 

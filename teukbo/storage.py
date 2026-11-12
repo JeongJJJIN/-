@@ -328,7 +328,8 @@ def build_history_run(
 ) -> dict[str, Any]:
     """이력 한 회차. 용량을 줄이려고 지표 값은 'ind' 순서의 배열로, 가능성 0% 인 특보는 생략한다.
 
-    regions[지역].x[모델] = [[극값, 선행시간h] 또는 null, …]  ('ind' 순서)
+    regions[지역].x[모델] = [[극값, 선행시간h] 또는 null, …]  ('ind' 순서) — 조용한 지역(모든 특보 가능성 0%, 공식 특보·예비특보 없음)은 생략
+    regions[지역].q       = 1: 예측은 있었지만 조용해서 x 를 생략했다는 표시 (전국 226곳을 다 남기면 하루 1MB 넘게 쌓인다)
     regions[지역].h[특보]  = {p: 가능성, mg: 모델 등급, g: 최종 등급, r: [모델별 도달률…('models' 순서)], w: [시작, 끝]}
     regions[지역].a       = 발효 중 특보 [{k: 종류, l: 단계, n: 이름, f: 발효 시각}]
     regions[지역].pre     = 예비특보 [{k, l, n, e: 예상 시점 문구}]
@@ -352,7 +353,8 @@ def build_history_run(
             if a.window_from is not None:
                 entry["w"] = [_t(a.window_from), _t(a.window_to)]
             h[a.hazard.id] = entry
-        rec: dict[str, Any] = {"x": x, "h": h}
+        quiet = bool(x) and not h and not ra.official.active and not ra.official.preliminary
+        rec: dict[str, Any] = {"q": 1, "h": h} if quiet else {"x": x, "h": h}
         if ra.official.available:
             rec["a"] = [
                 {"k": w.type, "l": w.level, "n": w.type_name + w.level_name, "f": _t(w.effective_from)}

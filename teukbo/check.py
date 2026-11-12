@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import sys
 
 from .config import load_config
@@ -45,6 +46,18 @@ def main() -> int:
         missing = sorted(set(open_meteo.HOURLY_VARS.values()) - set(ms.values))
         print(f"  정상  {model.id}: {len(data)}개 지점, {iso(ms.times[0])} ~ {iso(ms.times[-1])} ({len(ms.times)}시간)")
         print(f"        변수(값 있는 시간 수): {have}" + (f" · 없는 변수: {', '.join(missing)}" if missing else ""))
+    # 전국 수집은 지점을 여러 곳씩 묶어 요청한다 — 그 묶음 요청이 되는지 한 번 확인(전국에 고루 퍼진 지점으로)
+    fetch = st.raw.get("fetch", {})
+    chunk = int(fetch.get("open_meteo_chunk", 0))
+    first = next((m for m in st.models if m.source == "open_meteo"), None)
+    if chunk and first is not None and len(cfg.regions) > chunk:
+        spread = cfg.regions[:: max(1, len(cfg.regions) // chunk)][:chunk]
+        started = time.monotonic()
+        try:
+            got = open_meteo.fetch_model(spread, first, st.past_hours, st.forecast_hours, opts)
+            print(f"  정상  묶음 요청({first.id}): {len(got)}/{len(spread)}곳, {time.monotonic() - started:.1f}초 (전국 {len(cfg.regions)}곳은 {chunk}곳씩 {fetch.get('open_meteo_pause_seconds', 0)}초 간격)")
+        except FetchError as e:
+            print(f"  실패  묶음 요청({first.id}, {len(spread)}곳): {e}")
 
     print("\n[기상청 단기예보]")
     kma_model = next((m for m in st.models if m.source == "kma_forecast"), None)
