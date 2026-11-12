@@ -16,7 +16,7 @@ from .config import load_config
 from .http import FetchError, normalize_service_key
 from datetime import timedelta
 
-from .sources import kma_forecast, kma_warnings, korail, open_meteo
+from .sources import kma_forecast, kma_ultra, kma_warnings, korail, open_meteo
 from .timeutil import iso, now_kst
 
 
@@ -80,6 +80,9 @@ def main() -> int:
                 kind = "예비" if w.status == "preliminary" else "발효"
                 print(f"        {region.name}: {w.type_name}{w.level_name if w.status == 'active' else ' 예비특보'} [{kind}] 구역 {w.zone_name}")
 
+    print("\n[실시간 자료] (초단기실황·초단기예보 — 몇 분마다 도는 live.yml 이 쓰는 것)")
+    check_live(cfg, now, data_go_kr_key, apihub_key, opts)
+
     print("\n[코레일 열차운행정보] (전날까지의 실제 운행 기록 — 지연 통계용)")
     if not data_go_kr_key:
         print("  건너뜀 (인증키 미설정)")
@@ -89,6 +92,41 @@ def main() -> int:
 
     print(f"\n예측 자료 {ok_models}개 사용 가능" + ("" if ok_models else " — 계산할 수 없습니다"))
     return 0 if ok_models else 1
+
+
+def check_live(cfg, now, data_go_kr_key, apihub_key, opts: dict) -> None:
+    """초단기실황·초단기예보의 실제 응답을 그대로 보여 주고, 실시간 자료 한 벌을 끝까지 만들어 본다(저장하지 않음)."""
+    from . import live
+
+    if not (data_go_kr_key or apihub_key):
+        print("  건너뜀 (인증키 미설정)")
+        return
+    region = cfg.regions[0]
+    if data_go_kr_key:
+        for operation, bases, field in (("getUltraSrtNcst", kma_ultra.ncst_bases(now), "obsrValue"), ("getUltraSrtFcst", kma_ultra.fcst_bases(now), "fcstValue")):
+            for base in bases:
+                try:
+                    items = kma_ultra._fetch_grid(f"{kma_ultra.DATA_GO_KR_BASE}/{operation}", "serviceKey", data_go_kr_key, base, (region.nx, region.ny), opts, 1, operation)
+                except FetchError as e:
+                    print(f"  실패  {operation} 기준 {base[0]} {base[1]}: {e}")
+                    continue
+                first_time = items[0].get("fcstTime")
+                shown = [it for it in items if it.get("fcstTime") == first_time]
+                print(f"  정상  {operation} 기준 {base[0]} {base[1]} ({region.name} 격자 {region.nx},{region.ny}): {len(items)}행 — " + ", ".join(f"{it.get('category')}={it.get(field)!r}" for it in shown))
+                if operation == "getUltraSrtFcst":
+                    print("        시각별 RN1(강수)·SKY·PTY: " + " / ".join(
+                        f"{t[:2]}시 {' '.join(str(it.get(field)) for it in items if it.get('fcstTime') == t and it.get('category') in ('RN1', 'SKY', 'PTY'))}"
+                        for t in sorted({str(it.get('fcstTime')) for it in items}, key=lambda t: [str(i.get('fcstDate')) + t for i in items if str(i.get('fcstTime')) == t][0])))
+                break
+    doc = live.collect(cfg, now, {"DATA_GO_KR_SERVICE_KEY": data_go_kr_key or "", "KMA_APIHUB_KEY": apihub_key or ""}, None)
+    print(f"  결과  {live.summary_line(doc)}")
+    got_now = [r.name for r in cfg.regions if "now" in doc["regions"][r.id]]
+    got_fcst = [r.name for r in cfg.regions if doc["regions"][r.id].get("fcst")]
+    print(f"        지금 날씨 {len(got_now)}/{len(cfg.regions)}곳, 6시간 예보 {len(got_fcst)}/{len(cfg.regions)}곳")
+    for r in cfg.regions[:3]:
+        entry = doc["regions"][r.id]
+        print(f"        {r.name}: 지금 {entry.get('now')}")
+        print("          6시간 " + " | ".join(f"{row['t'][11:13]}시 {row['temp']}℃ 비 {row['rain'] or '없음'} 바람 {row['wind']}" for row in entry.get("fcst", [])))
 
 
 def check_korail(key: str, now, opts: dict) -> None:

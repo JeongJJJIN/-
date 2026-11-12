@@ -1,0 +1,64 @@
+name: 실시간 자료 (특보·지금 날씨)
+
+# 몇 분마다: 특보·예비특보, 초단기실황, 초단기예보를 받아 live.json 하나로 묶어 `live` 브랜치에 올린다.
+# 화면은 그 파일을 https://raw.githubusercontent.com/<저장소>/live/live.json 에서 읽는다(사이트를 다시 배포하지 않는다).
+# - GitHub 의 예약 실행은 가장 짧아야 5분 간격이고, 사정에 따라 더 늦게 시작될 수 있다(보장되지 않음).
+# - 위 주소는 GitHub 쪽에서 최대 5분 동안 같은 내용을 돌려준다. → 화면에 반영되기까지 보통 5~10분.
+# - 화면은 '확인 시각'을 보고, 오래된 값은 쓰지 않고 지연을 알린다(config/settings.json 의 live.stale_after_minutes).
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write # live 브랜치에 올리기
+
+concurrency:
+  group: live-data
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: 실시간 수집
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 직전 실시간 자료 받기 (조회 간격 판단·실패 시 이어 쓰기용)
+        run: |
+          mkdir -p _prev
+          if git fetch --quiet --depth=1 origin live 2>/dev/null; then
+            git show FETCH_HEAD:live.json > _prev/live.json || rm -f _prev/live.json
+          else
+            echo "live 브랜치가 아직 없습니다(첫 실행)."
+          fi
+
+      - name: 수집 (표준 라이브러리만 사용)
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+          KMA_APIHUB_KEY: ${{ secrets.KMA_APIHUB_KEY }}
+        run: python3 -m teukbo.live --prev _prev/live.json --out _live/live.json
+
+      - name: live 브랜치에 올리기 (기록을 쌓지 않고 최신 한 벌만 둔다)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          cd _live
+          cat > README.md <<'TXT'
+          이 브랜치는 자동으로 만들어집니다(직접 고치지 마세요).
+          live.json — 몇 분마다 새로 만들어지는 실시간 자료(특보·예비특보, 지금 날씨, 앞으로 6시간). 만드는 곳: main 브랜치의 .github/workflows/live.yml
+          TXT
+          git init --quiet --initial-branch=live .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add live.json README.md
+          git commit --quiet -m "live: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M') KST"
+          for attempt in 1 2 3; do
+            if git push --quiet --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" live; then exit 0; fi
+            echo "push 실패 — 다시 시도합니다 (${attempt}/3)"
+            sleep $((attempt * 4))
+          done
+          echo "::error::실시간 자료를 올리지 못했습니다."
+          exit 1

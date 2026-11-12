@@ -251,6 +251,9 @@ def _official_for(
     return None, None, None
 
 
+official_for = _official_for  # 실시간 수집(teukbo.live)도 같은 규칙으로 특보 ↔ 공식 발표를 잇는다
+
+
 def assess_hazard(
     hazard: Hazard,
     cache: _IndicatorCache,

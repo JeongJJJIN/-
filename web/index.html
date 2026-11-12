@@ -26,9 +26,10 @@
         <h1>기상특보 가능성</h1>
         <p class="updated" id="updated" aria-live="polite">불러오는 중…</p>
       </div>
+      <p class="live-status" id="live-status" role="status" hidden></p>
       <nav class="tabs" aria-label="화면 이동">
         <a href="./" aria-current="page">특보 가능성</a>
-        <a href="rail.html">철도 지도</a>
+        <a href="rail.html">지도 (특보·철도·레이더)</a>
       </nav>
       <div class="region-row">
         <label class="region-label" for="region">지역</label>
@@ -48,12 +49,25 @@
       <div id="official" class="panel"></div>
     </section>
 
+    <section class="block" id="now-block" aria-labelledby="h-now" hidden>
+      <div class="block-head">
+        <h2 id="h-now">지금 날씨와 앞으로 6시간</h2>
+        <p class="hint" id="now-hint"></p>
+      </div>
+      <div id="now"></div>
+    </section>
+
     <section class="block" aria-labelledby="h-hazards">
       <div class="block-head">
         <h2 id="h-hazards">향후 <span id="horizon">48</span>시간 특보 가능성</h2>
         <p class="hint" id="models-line"></p>
       </div>
       <div id="hazards"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-radar">
+      <h2 id="h-radar">비구름 레이더</h2>
+      <div class="panel radar" id="radar"></div>
     </section>
 
     <section class="block" id="overview" aria-labelledby="h-overview">
@@ -86,6 +100,7 @@
   </footer>
 
   <noscript><p class="noscript">이 페이지는 자바스크립트가 필요합니다.</p></noscript>
+  <script src="live.js?v=__BUILD__" defer></script>
   <script src="app.js?v=__BUILD__" defer></script>
 </body>
 </html>

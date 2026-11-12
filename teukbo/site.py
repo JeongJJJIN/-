@@ -53,7 +53,7 @@ def build_site(data_dir: Path, out_dir: Path, web_dir: Path | None = None) -> st
     site_data = out_dir / "data"
     site_data.mkdir(exist_ok=True)
     shutil.copy2(latest, site_data / "latest.json")
-    for name in ("accuracy.json", "warnings.json"):
+    for name in ("accuracy.json", "warnings.json", "live.json"):  # live.json 은 데모·내 컴퓨터용(배포본은 따로 올라온다)
         if (data_dir / name).is_file():
             shutil.copy2(data_dir / name, site_data / name)
     if (data_dir / "rail" / "summary.json").is_file():

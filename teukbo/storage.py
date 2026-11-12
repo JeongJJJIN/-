@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .assess import HazardAssessment, OfficialWarning, RegionAssessment
+from .assess import HazardAssessment, OfficialWarning, RegionAssessment, RegionOfficial
 from .config import Config
 from .indicators import HOUR, ModelSeries, indicator_points
 from .timeutil import floor_hour, iso
@@ -72,6 +72,15 @@ def _warning_dict(w: OfficialWarning) -> dict[str, Any]:
     }
 
 
+def region_official_dict(official: RegionOfficial) -> dict[str, Any]:
+    """한 지역의 공식 특보 현황(latest.json·live.json 공통 형식)."""
+    return {
+        "available": official.available,
+        "active": [_warning_dict(w) for w in official.active],
+        "preliminary": [_warning_dict(w) for w in official.preliminary],
+    }
+
+
 # ---------------------------------------------------------------- latest.json
 
 
@@ -103,8 +112,11 @@ def build_latest(
     sources: dict[str, Any],
     model_status: dict[str, dict[str, Any]],
     demo: bool = False,
+    live_url: str | None = None,
 ) -> dict[str, Any]:
     th, st = cfg.thresholds, cfg.settings
+    live_cfg = st.raw.get("live", {})
+    live_url = live_url or live_cfg.get("url") or None
     regions = []
     for ra in assessments:
         top = ra.top()
@@ -116,11 +128,7 @@ def build_latest(
                 "zones": list(ra.region.zone_codes),
                 "models": ra.models_used,
                 "top": ({"hazard": top.hazard.id, "grade": top.grade, "p": top.probability} if top else None),
-                "official": {
-                    "available": ra.official.available,
-                    "active": [_warning_dict(w) for w in ra.official.active],
-                    "preliminary": [_warning_dict(w) for w in ra.official.preliminary],
-                },
+                "official": region_official_dict(ra.official),
                 "hazards": {a.hazard.id: _hazard_summary(a) for a in ra.hazards},
             }
         )
@@ -131,6 +139,8 @@ def build_latest(
         "notice": NOTICE,
         "horizon_hours": st.horizon_hours,
         "stale_after_hours": st.stale_after_hours,
+        # 실시간 자료(특보·지금 날씨)를 읽어 올 주소. 없으면 화면은 이 파일의 값만 쓴다.
+        "live": ({"url": live_url, "stale_after_minutes": live_cfg.get("stale_after_minutes", 30), "poll_seconds": live_cfg.get("poll_seconds", 120)} if live_url else None),
         "grades": {"caution_min": st.grade_caution_min, "high_min": st.grade_high_min},
         "scoring": {
             "weight_exceed_ratio": st.scoring.weight_exceed_ratio,
