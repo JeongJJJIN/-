@@ -182,7 +182,8 @@
       s("feComposite", { in: "SourceGraphic", in2: "mask", operator: "in" }));
     state.radarImage = s("image", { class: "radar-layer", x: 0, y: 0, width: RADAR.width, height: RADAR.height, preserveAspectRatio: "none", filter: "url(#radar-key)", "aria-hidden": "true" });
     const radarLayer = s("g", { "clip-path": "url(#radar-clip)" }, state.radarImage);
-    svg.append(s("defs", null, state.patterns, key, s("clipPath", { id: "radar-clip" }, s("rect", { x: f.x, y: f.y, width: f.w, height: f.h }))), zones, radarLayer, casing, rail, marks, labels);
+    state.rainLayer = s("g", { class: "rain-dots", "aria-hidden": "true" });  // 선로 위의 강우(레이더에서 읽은 값) — 레이더 그림을 꺼도 보인다
+    svg.append(s("defs", null, state.patterns, key, s("clipPath", { id: "radar-clip" }, s("rect", { x: f.x, y: f.y, width: f.w, height: f.h }))), zones, radarLayer, casing, rail, state.rainLayer, marks, labels);
     holder.append(svg);
     state.svg = svg;
     bindMapEvents(svg);
@@ -504,6 +505,52 @@
     panel.append(h("p", { class: "official-foot" }, `기상청 발표 기준${w.provider ? ` (${w.provider})` : ""}, ${fmtClock(w.generated_at)} 확인 · `, h("a", { href: OFFICIAL_URL, rel: "noopener" }, "날씨누리 특보 현황")));
   }
 
+  // ------------------------------------------------------------ 선로 강우 실황 (서버가 레이더 영상에서 읽은 값)
+
+  const RAIN_STALE_MINUTES = 30;
+  /** 쓸 수 있는 선로 강우 자료(최근에 확인했고, 영상도 최근 것). 없으면 null. */
+  function railRain() {
+    const rain = state.live && state.live.rail_rain;
+    if (!rain || !Live.fresh(rain, liveStale())) return null;
+    return (Date.now() - new Date(rain.frame).getTime()) / 60000 <= RAIN_STALE_MINUTES + 15 ? rain : null;
+  }
+  const rainColor = (rate) => { let color = Live.RADAR_SCALE[0][1]; for (const [from, c] of Live.RADAR_SCALE) if (rate >= from) color = c; return color; };
+  /** 강수 강도 구간을 글로: "5~6mm/h", "150mm/h 이상" */
+  const rainRange = (lo, hi) => (hi == null ? `${Live.num(lo)}mm/h 이상` : `${Live.num(lo)}~${Live.num(hi)}mm/h`);
+  /** 기상청 강수 강도 구분에서 눈여겨볼 단계 */
+  const rainWord = (lo) => (lo >= 30 ? "매우 강한 비" : lo >= 15 ? "강한 비" : "");
+
+  function renderRain() {
+    const panel = clear($("rain-status")), rain = railRain();
+    const layer = clear(state.rainLayer);
+    if (!rain) {
+      const raw = state.live && state.live.rail_rain;
+      panel.append(h("p", { class: "empty", text: !liveConfig() ? "실시간 자료가 연결되어 있지 않습니다." : raw && raw.error ? "레이더 영상을 읽지 못해 선로 강우를 표시하지 않습니다." : "선로 강우 자료를 아직 받지 못했습니다." }));
+      return;
+    }
+    for (const [lon, lat, rate] of rain.points || []) {
+      const [x, y] = P(lon, lat);
+      layer.append(s("circle", { cx: x.toFixed(2), cy: y.toFixed(2), r: rate >= 15 ? 4.2 : 3.2, fill: rainColor(rate), class: rate >= 15 ? "rain-dot strong" : "rain-dot" }));
+    }
+    const clock = fmtClock(rain.frame).replace(/^.*일 /, "");
+    const wet = (rain.lines || []).filter((line) => line.now > 0), dried = (rain.lines || []).filter((line) => !(line.now > 0) && line.acc60 >= 0.1);
+    if (!wet.length && !dried.length) {
+      panel.append(h("p", { class: "empty", text: `지금 선로 위에 비구름이 없습니다 (레이더 ${clock} 영상 기준).` }));
+    } else {
+      const row = (line) => h("tr", null,
+        h("th", { scope: "row", text: line.name }),
+        h("td", { class: line.now >= 15 ? "over" : null }, line.now > 0 ? [h("span", { class: "rain-key", style: `background:${rainColor(line.now)}` }), rainRange(line.now, line.hi)] : "그침",
+          rainWord(line.now) ? h("small", null, rainWord(line.now)) : null),
+        h("td", null, line.zone ? h("button", { class: "linklike", type: "button", onclick: () => { pick({ kind: "zone", code: line.zone }); focusZone(line.zone); } }, zoneFullName(line.zone)) : "–"),
+        h("td", { text: line.acc60 >= 0.1 ? `약 ${Live.num(line.acc60)}mm` : "0.1mm 미만" }));
+      panel.append(h("div", { class: "table-scroll" }, h("table", { class: "fit rain-table" },
+        h("thead", null, h("tr", null, h("th", { scope: "col", text: "노선" }), h("th", { scope: "col" }, "지금 가장 센 곳", h("small", null, "레이더 추정")), h("th", { scope: "col", text: "어디" }), h("th", { scope: "col" }, "최근 1시간", h("small", null, "추정 누적")))),
+        h("tbody", null, [...wet, ...dried].map(row)))));
+    }
+    panel.append(h("p", { class: "official-foot" }, `기상청 레이더 합성영상 ${clock} 관측분 · ${fmtAgo(rain.checked_at)} 확인`,
+      rain.frames_1h < 12 ? ` · 최근 1시간 영상 12장 중 ${rain.frames_1h}장으로 계산` : "", " · 우량계 관측이 아닌 레이더 추정값입니다."));
+  }
+
   // ------------------------------------------------------------ 지금 요약·노선별 특보 현황
 
   /** 구역의 공식 발표 가운데 가장 높은 단계: 3 경보(중대경보 포함) · 2 주의보 · 1 예비특보 · 0 없음 */
@@ -536,8 +583,12 @@
   function renderSummary() {
     const box = clear($("now-summary")), w = state.warnings;
     const tile = (label, value, unit, sub) => h("div", { class: "tile" }, h("p", { class: "label", text: label }), h("p", { class: value == null ? "value pending" : "value" }, value == null ? "확인 불가" : String(value), value != null && unit ? h("small", null, unit) : null), h("p", { class: "sub", text: sub || "\u00a0" }));
+    const rain = railRain(), wet = rain ? (rain.lines || []).filter((line) => line.now > 0) : [];
+    const rainTile = !rain ? tile("선로 위 가장 센 비", null)
+      : wet.length ? tile("선로 위 가장 센 비", Live.num(wet[0].now), wet[0].hi == null ? "mm/h 이상" : `~${Live.num(wet[0].hi)}mm/h`, `${wet[0].name.replace(/ \(.*\)$/, "")} ${zoneFullName(wet[0].zone)} · 비 오는 노선 ${wet.length}개`)
+      : tile("선로 위 가장 센 비", "없음", "", `레이더 ${fmtClock(rain.frame).replace(/^.*일 /, "")} 영상 기준`);
     if (!w || !w.available) {
-      box.append(tile("특보 발효 구역", null), tile("예비특보 구역", null), tile("특보 구역을 지나는 노선", null));
+      box.append(tile("특보 발효 구역", null), tile("예비특보 구역", null), tile("특보 구역을 지나는 노선", null), rainTile);
       return;
     }
     const official = allOfficial();
@@ -552,7 +603,8 @@
     box.append(
       tile("특보 발효 구역", warn + adv, "곳", warn + adv ? `경보 ${warn}곳 · 주의보 ${adv}곳` : "전국 육상 기준"),
       tile("예비특보 구역", pre, "곳", pre ? "곧 특보가 내려질 수 있는 곳" : "전국 육상 기준"),
-      tile("특보 구역을 지나는 노선", lines.length, "개", lines.length ? lines.slice(0, 3).map((r) => r.line.name.replace(/ \(.*\)$/, "")).join("·") + (lines.length > 3 ? " 외" : "") : "발효 중인 특보 기준"));
+      tile("특보 구역을 지나는 노선", lines.length, "개", lines.length ? lines.slice(0, 3).map((r) => r.line.name.replace(/ \(.*\)$/, "")).join("·") + (lines.length > 3 ? " 외" : "") : "발효 중인 특보 기준"),
+      rainTile);
   }
 
   function renderLines() {
@@ -594,6 +646,7 @@
     renderLegend();
     paintZones();
     renderPicked();
+    renderRain();
     renderSummary();
     renderLines();
     renderList();
@@ -632,7 +685,9 @@
     const before = Live.warningsSignature({ warnings: state.warnings });
     derive();
     renderHead();
-    if (Live.warningsSignature({ warnings: state.warnings }) !== before) { renderTypeChips(); paintZones(); renderSummary(); renderLines(); renderList(); }
+    renderRain();
+    if (Live.warningsSignature({ warnings: state.warnings }) !== before) { renderTypeChips(); paintZones(); renderLines(); renderList(); }
+    renderSummary();
     renderPicked();
   }
 

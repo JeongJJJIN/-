@@ -12,6 +12,7 @@
   web/geo/rail.json      철도 노선 [{name, fast, paths: [[경도,위도,…]…]}]
   web/geo/stations.json  역 [{code, name, lon, lat, zone}]  — 수집부(teukbo.rail)도 이 파일로 역 → 특보구역을 찾는다
   web/geo/lines.json     노선이 지나는 특보구역(순서대로)과 그 안의 역 [{name, fast, parts: [[구역 코드, [역 키…]], …]}]
+  config/rail_samples.json   선로를 따라 약 1km 마다 찍은 표본점 [{name, samples: [[경도, 위도, 구역 코드], …]}] — 레이더 강우 읽기용
 
     python3 tools/build_geodata.py --zones wrn_land_8.geojson --zones-full wrnArea.geojson \\
         --rail lines_geom.json --stations stations.json --codes station_codes.csv
@@ -415,8 +416,10 @@ def _chain(paths: list[list[tuple[float, float]]]) -> list[list[tuple[float, flo
     return chains
 
 
-def build_lines(rail: list[dict], stations: list[dict], locator: ZoneLocator) -> list[dict]:
-    """노선마다, 지나가는 특보구역을 순서대로 적고 그 구역 안의 역을 붙인다.
+def build_lines(rail: list[dict], stations: list[dict], locator: ZoneLocator) -> tuple[list[dict], list[dict]]:
+    """노선마다, 지나가는 특보구역을 순서대로 적고 그 구역 안의 역을 붙인다. 함께, 선로를 따라 찍은 표본점도 돌려준다.
+
+    표본점 [{name, samples: [[경도, 위도, 구역 코드], …]}] 은 레이더 영상에서 선로 위의 강우를 읽는 데 쓴다(teukbo.radar).
 
     [{name, fast, parts: [[구역 코드, [역 키…]], …]}] — 역 키는 화면(rail.js)과 같은 규칙: 역코드, 없으면 "name:역명".
     구역은 노선을 따라 약 1km 마다 확인하므로, 역이 없는 구역도 빠지지 않는다.
@@ -432,8 +435,10 @@ def build_lines(rail: list[dict], stations: list[dict], locator: ZoneLocator) ->
         places.append((seen_place[spot], (st["lon"], st["lat"]), st["zone"]))
 
     out = []
+    sample_out = []
     for line in rail:
         parts: list[list] = []
+        points: list[list] = []
         for chain in _chain([list(zip(c[0::2], c[1::2])) for c in line["paths"]]):
             # 노선을 따라 표본점(누적 거리, 구역)
             samples: list[tuple[float, str]] = []
@@ -444,9 +449,11 @@ def build_lines(rail: list[dict], stations: list[dict], locator: ZoneLocator) ->
                 n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / LINE_SAMPLE_STEP))
                 for k in range(n):
                     t = k / n
-                    zone, _exact = locator.find(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+                    lon, lat = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+                    zone, _exact = locator.find(lon, lat)
                     if zone:
                         samples.append((along + seg * t, zone))
+                        points.append([round(lon, 3), round(lat, 3), zone])
                 along += seg
                 cum.append(along)
             runs: list[list] = []  # [구역, 시작 거리, 끝 거리, [역…]]
@@ -499,8 +506,9 @@ def build_lines(rail: list[dict], stations: list[dict], locator: ZoneLocator) ->
         axis = (lambda pos: pos[0]) if east_west else (lambda pos: -pos[1])
         parts = [[zone, sorted(merged[zone], key=lambda k: axis(spot[k]))] for zone in sorted(merged, key=lambda z: axis(centers[z]))]
         out.append({"name": line["name"], "fast": line["fast"], "parts": parts})
-        print(f"    {line['name']:22s} 구역 {len(parts):3d}개, 역 {sum(len(p[1]) for p in parts):3d}곳")
-    return out
+        sample_out.append({"name": line["name"], "samples": points})
+        print(f"    {line['name']:22s} 구역 {len(parts):3d}개, 역 {sum(len(p[1]) for p in parts):3d}곳, 표본점 {len(points):4d}개")
+    return out, sample_out
 
 
 def main() -> int:
@@ -527,7 +535,9 @@ def main() -> int:
     stations = build_stations(args.stations, read_codes(args.codes), ZoneLocator(args.zones_full, table))
     write(args.out / "stations.json", stations)
     print("노선이 지나는 구역·역")
-    write(args.out / "lines.json", build_lines(rail, stations, ZoneLocator(args.zones_full, table)))
+    lines, samples = build_lines(rail, stations, ZoneLocator(args.zones_full, table))
+    write(args.out / "lines.json", lines)
+    write(ROOT / "config" / "rail_samples.json", samples)  # 서버(teukbo.radar)만 쓴다 → 웹 폴더에 두지 않는다
     without = [s["name"] for s in stations if not s["zone"]]
     print(f"  역 {len(stations)}곳" + (f", 특보구역을 찾지 못한 역: {', '.join(without)}" if without else ", 모두 특보구역 연결됨"))
     return 0

@@ -9,6 +9,11 @@
 | `rail.json` | 철도 노선 `[{name, fast(고속선 여부), paths: [[경도, 위도, …], …]}]` | OpenStreetMap |
 | `stations.json` | 역 `[{code(코레일 역코드, 없으면 null), name, lon, lat, zone(특보구역 코드), alt(역코드표의 다른 이름, 있을 때만)}]` | OpenStreetMap + 한국철도공사 역코드 |
 
+| `lines.json` | 노선이 지나는 특보구역(선로를 따라 약 1km 마다 확인)과 구역 안의 역 `[{name, fast, parts: [[구역 코드, [역 키…]], …]}]` | 위 세 자료에서 계산 |
+
+같은 도구가 `config/rail_samples.json`(선로를 따라 약 1km 마다 찍은 표본점 4,565개 — 레이더 영상에서 선로 위의 강우를 읽는 데 씀)도 만듭니다.
+역은 선로에서 150m 안에 있을 때 그 노선 위의 역으로 봅니다(정차 여부와는 무관).
+
 `stations.json` 은 수집부(`teukbo/rail_run.py`)도 읽습니다 — 열차가 정차한 역이 어느 특보구역인지 찾는 데 씁니다.
 
 ## 출처와 이용 조건

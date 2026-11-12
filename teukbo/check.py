@@ -83,6 +83,9 @@ def main() -> int:
     print("\n[실시간 자료] (초단기실황·초단기예보 — 몇 분마다 도는 live.yml 이 쓰는 것)")
     check_live(cfg, now, data_go_kr_key, apihub_key, opts)
 
+    print("\n[선로 강우] (기상청 레이더 합성영상을 직접 읽음 — 인증키 없이)")
+    check_radar(now, opts)
+
     print("\n[코레일 열차운행정보] (전날까지의 실제 운행 기록 — 지연 통계용)")
     if not data_go_kr_key:
         print("  건너뜀 (인증키 미설정)")
@@ -127,6 +130,35 @@ def check_live(cfg, now, data_go_kr_key, apihub_key, opts: dict) -> None:
         entry = doc["regions"][r.id]
         print(f"        {r.name}: 지금 {entry.get('now')}")
         print("          6시간 " + " | ".join(f"{row['t'][11:13]}시 {row['temp']}℃ 비 {row['rain'] or '없음'} 바람 {row['wind']}" for row in entry.get("fcst", [])))
+
+
+def check_radar(now, opts: dict) -> None:
+    """가장 최근 레이더 영상을 받아 범례·크기를 확인하고, 선로 위의 강우를 한 번 계산해 본다."""
+    from . import radar
+
+    try:
+        found = radar.latest_stamp(now, [], opts)
+    except Exception as e:  # 점검용 — 어떤 오류든 보여 준다
+        print(f"  실패  {type(e).__name__}: {e}")
+        return
+    if found is None or found[1] is None:
+        print("  실패  최근 35분 안의 레이더 영상을 받지 못했습니다 (서버가 이 위치의 접속을 막거나 영상 주소가 바뀌었을 수 있습니다)")
+        return
+    stamp, frame = found
+    counts: dict[float, int] = {}
+    for y in range(radar.FRAME[1], radar.FRAME[3] + 1):
+        for x in range(radar.FRAME[0], radar.FRAME[2] + 1):
+            rate = frame.rate_at(x, y)
+            if rate is not None:
+                counts[rate] = counts.get(rate, 0) + 1
+    print(f"  정상  영상 {stamp} ({frame.width}x{frame.height}), 범례 색 일치: {frame.legend_ok()}, 비구름 화소 {sum(v for k, v in counts.items() if k >= radar.RAIN_MIN)}개, 가장 센 구간 {max(counts) if counts else 0:g}mm/h 이상")
+    samples = radar.RailSamples.load()
+    rainy = samples.read(frame)
+    lines: dict[str, float] = {}
+    for i, rate in rainy.items():
+        name = samples.names[samples.points[i][0]]
+        lines[name] = max(lines.get(name, 0.0), rate)
+    print(f"        선로 표본점 {len(samples.points)}개 중 비가 있는 점 {len(rainy)}개" + ("" if not lines else " — " + ", ".join(f"{name} {rate:g}mm/h 이상" for name, rate in sorted(lines.items(), key=lambda kv: -kv[1]))))
 
 
 def check_korail(key: str, now, opts: dict) -> None:

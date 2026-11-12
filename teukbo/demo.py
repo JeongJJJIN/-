@@ -204,7 +204,28 @@ def live_doc(cfg: Config, now: datetime, forecasts: dict[str, dict[str, ModelSer
         regions[region.id] = entry
     section = {"available": True, "checked_at": iso(now), "provider": "데모", "error": None}
     return {"schema": live.SCHEMA, "generated_at": iso(now), "demo": True, "warnings": warnings,
-            "obs": {**section, "base": iso(hour)}, "fcst": {**section, "base": iso(hour - timedelta(minutes=30))}, "regions": regions}
+            "obs": {**section, "base": iso(hour)}, "fcst": {**section, "base": iso(hour - timedelta(minutes=30))}, "regions": regions,
+            "rail_rain": rail_rain(now)}
+
+
+def rail_rain(now: datetime) -> dict:
+    """가상의 선로 강우: 남해안에서 북동쪽으로 올라오는 비구름대가 선로 위를 지나는 모습(실제 레이더가 아니다)."""
+    from . import radar
+
+    samples = radar.RailSamples.load()
+    latest = radar.stamp_of(now - timedelta(minutes=7))
+    frames: dict[str, dict[str, float]] = {}
+    for k in range(radar.FRAMES_PER_HOUR):
+        stamp = (radar.time_of(latest) - timedelta(minutes=5 * k)).strftime("%Y%m%d%H%M")
+        center = (_CENTER[0] - 0.035 * k, _CENTER[1] - 0.05 * k)  # 5분 전마다 조금 남서쪽에 있었다
+        rates: dict[str, float] = {}
+        for i, (_line, lon, lat, _zone, _x, _y) in enumerate(samples.points):
+            d = math.hypot(lat - center[0], (lon - center[1]) * 0.82)
+            rate = 30.0 if d < 0.06 else 20.0 if d < 0.12 else 10.0 if d < 0.2 else 5.0 if d < 0.3 else 2.0 if d < 0.42 else 0.5 if d < 0.55 else 0.0
+            if rate >= radar.RAIN_MIN:
+                rates[str(i)] = rate
+        frames[stamp] = rates
+    return {**radar.build_result(samples, frames, latest, now), "demo": True}
 
 
 def rail_summary(cfg: Config, now: datetime, days: int = 14) -> dict:

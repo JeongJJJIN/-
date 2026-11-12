@@ -642,5 +642,13 @@ table.fit.lines-table td { white-space: normal; }
 .pill.verdict-no_difference { background: var(--g-low-wash); color: var(--ink); border-color: var(--axis); }
 .pill.verdict-insufficient { background: transparent; color: var(--ink-3); border-color: var(--axis); border-style: dashed; }
 
+/* 선로 강우 실황 */
+.summary-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rain-dot { stroke: var(--map-land); stroke-width: 0.8; transform-box: fill-box; transform-origin: center; transform: scale(var(--u, 1)); pointer-events: none; }
+.rain-dot.strong { stroke: var(--ink); stroke-width: 1.1; }
+.rain-key { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; border: 1px solid var(--map-line); vertical-align: -1px; }
+table.fit.rain-table td, table.fit.rain-table tbody th { white-space: nowrap; }
+@media (min-width: 620px) { .summary-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
 /* hidden 속성은 display 를 지정한 요소에서도 늘 숨긴다 */
 [hidden] { display: none !important; }

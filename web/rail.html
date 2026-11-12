@@ -67,6 +67,14 @@
       <div id="picked" class="panel picked" aria-live="polite"></div>
     </section>
 
+    <section class="block" aria-labelledby="h-rain">
+      <div class="block-head">
+        <h2 id="h-rain">선로 강우 실황</h2>
+        <p class="hint" id="rain-hint">기상청 레이더 영상을 5분마다 읽어, 선로 위(둘레 약 2km)의 비 세기를 노선별로 계산합니다.</p>
+      </div>
+      <div id="rain-status" class="panel"></div>
+    </section>
+
     <section class="block" aria-labelledby="h-lines">
       <div class="block-head">
         <h2 id="h-lines">노선별 특보 현황</h2>
@@ -101,6 +109,7 @@
               <li><b>특보 구역</b>: 기상청이 발표한 특보·예비특보를 특보구역 단위로 칠합니다. 몇 분 간격으로 다시 확인하며, 확인 시각을 위에 적습니다.</li>
               <li><b>노선별 특보 현황</b>: 노선을 따라 약 1km 마다 어느 특보구역인지 확인해 둔 자료로, 지금 특보 구역을 지나는 노선과 그 구역 안의 역을 보여 줍니다. 열차가 실제로 영향을 받는지는 알 수 없습니다.</li>
               <li><b>비구름 레이더</b>: 기상청 레이더 합성영상(5분 간격)의 비구름 색만 같은 좌표에 겹칩니다.</li>
+              <li><b>선로 강우 실황</b>: 같은 영상의 색을 범례의 강수 강도 구간으로 되돌려, 선로를 따라 약 1km 마다 찍은 4,500여 점에서 읽은 값입니다. 점마다 둘레 1화소(약 1.7km)에서 가장 센 값을 씁니다. <b>우량계 관측이 아니라 레이더 추정</b>이며 색 구간(예: 5~6mm/h)으로만 알 수 있습니다. 1시간 누적은 구간 가운데 값을 5분씩 더한 추정입니다. 지도의 선로 위 색 점이 이 값입니다.</li>
               <li><b>점무늬(가능성)</b>: 이 서비스가 계산한 향후 48시간 특보 가능성으로, 계산 대상 지역(전남)에만 있습니다.</li>
               <li>열차가 얼마나 늦었는지는 <a href="analysis.html">분석</a>에서 봅니다.</li>
             </ul>
