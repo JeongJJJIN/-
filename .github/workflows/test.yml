@@ -23,3 +23,16 @@ jobs:
         run: python3 -m unittest discover -s tests -t . -v
       - name: 화면 스크립트 문법 검사
         run: node --check web/app.js && node --check web/sw.js
+
+  sources:
+    name: 출처 점검 (참고용, 실패해도 무시)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - name: 각 출처에 실제로 접속해 응답 확인
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+          KMA_APIHUB_KEY: ${{ secrets.KMA_APIHUB_KEY }}
+        run: python3 -m teukbo.check

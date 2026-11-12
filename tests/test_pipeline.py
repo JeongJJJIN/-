@@ -141,6 +141,43 @@ class RealRunFailureModesTest(unittest.TestCase):
         self.assertEqual(seen["warnings"], ("abc+def==", "hubkey"))
 
 
+class SourceCheckTest(unittest.TestCase):
+    def test_reports_failure_when_nothing_is_reachable(self):
+        import contextlib
+        import io
+
+        from teukbo import check
+
+        out = io.StringIO()
+        with mock.patch.object(open_meteo, "get_json", side_effect=FetchError("HTTP 429")), mock.patch.dict(
+            "os.environ", {"DATA_GO_KR_SERVICE_KEY": "", "KMA_APIHUB_KEY": ""}
+        ), contextlib.redirect_stdout(out):
+            code = check.main()
+        self.assertEqual(code, 1)
+        self.assertIn("인증키 미설정", out.getvalue())
+
+    def test_reports_models_when_reachable(self):
+        import contextlib
+        import io
+
+        from teukbo import check, demo
+
+        now = kst(2026, 11, 12, 21)
+        forecasts, _ = demo.generate(CFG, now, [now])
+
+        def fake(regions, model, *_a, **_kw):
+            return {r.id: forecasts[model.id][r.id] for r in regions}
+
+        out = io.StringIO()
+        with mock.patch.object(open_meteo, "fetch_model", side_effect=fake), mock.patch.dict(
+            "os.environ", {"DATA_GO_KR_SERVICE_KEY": "", "KMA_APIHUB_KEY": ""}
+        ), contextlib.redirect_stdout(out):
+            code = check.main()
+        self.assertEqual(code, 0)
+        self.assertIn("정상  ecmwf_ifs025", out.getvalue())
+        self.assertIn("없는 변수: gust", out.getvalue())  # JMA 는 돌풍 자료가 없다
+
+
 class RepositoryHygieneTest(unittest.TestCase):
     def test_no_secrets_or_keys_in_tracked_config(self):
         for path in (ROOT / "config").glob("*.json"):

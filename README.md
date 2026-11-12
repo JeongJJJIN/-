@@ -81,6 +81,12 @@ python3 -m http.server -d _site 8000
 python3 -m unittest discover -s tests -t .
 ```
 
+출처에 실제로 접속되는지(인증키·모델 이름 확인)만 보려면 — 아무것도 저장하지 않습니다:
+
+```bash
+python3 -m teukbo.check
+```
+
 ## 설정 파일
 
 ### `config/regions.json` — 지역
