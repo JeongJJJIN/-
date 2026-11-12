@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>철도 특보 지도 · 기상특보 가능성</title>
+  <title>특보·철도 지도 · 기상특보 가능성</title>
   <meta name="description" content="전국 철도 노선과 역 위에 현재 기상특보 구역을 표시하고, 전날까지의 열차 지연과 특보의 관계를 보여 줍니다. 참고용이며 공식 발표가 우선합니다.">
   <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
@@ -21,13 +21,13 @@
   <header class="masthead">
     <div class="wrap">
       <div class="title-row">
-        <h1>철도 특보 지도</h1>
+        <h1>특보·철도 지도</h1>
         <p class="updated" id="updated" aria-live="polite">불러오는 중…</p>
       </div>
       <p class="live-status" id="live-status" role="status" hidden></p>
       <nav class="tabs" aria-label="화면 이동">
         <a href="./">특보 가능성</a>
-        <a href="rail.html" aria-current="page">철도 지도</a>
+        <a href="rail.html" aria-current="page">지도 (특보·철도·레이더)</a>
       </nav>
     </div>
   </header>
@@ -37,19 +37,25 @@
 
     <section class="block" aria-labelledby="h-map">
       <div class="block-head">
-        <h2 id="h-map">지금 특보가 발효된 구역과 철도</h2>
-        <p class="hint">구역이나 역을 누르면 아래에 내용이 나옵니다. 지도는 두 손가락으로 움직이고 확대합니다(PC는 끌기, Ctrl+휠).</p>
+        <h2 id="h-map">특보 · 철도 · 비구름 레이더</h2>
+        <p class="hint">구역이나 역을 누르면 아래에 내용이 나옵니다. 지도는 두 손가락으로 움직이고 확대합니다(PC는 끌기, Ctrl+휠). ‘레이더’ 단추로 비구름을 켜고 끕니다.</p>
       </div>
       <div class="chips" id="type-chips" role="group" aria-label="특보 종류 고르기"></div>
       <div class="map-card">
         <div class="map-tools" role="group" aria-label="지도 조작">
           <button type="button" id="zoom-all">전국</button>
           <button type="button" id="zoom-jn">전남</button>
+          <button type="button" id="radar-toggle" aria-pressed="true">레이더</button>
           <button type="button" id="zoom-out" aria-label="축소">−</button>
           <button type="button" id="zoom-in" aria-label="확대">+</button>
         </div>
+        <div class="radar-bar" id="radar-bar" hidden>
+          <span id="radar-time" aria-live="polite">레이더 영상을 찾는 중…</span>
+          <button type="button" class="chip" id="radar-play" aria-pressed="false">최근 1시간 재생</button>
+        </div>
         <div class="map" id="map"></div>
         <ul class="map-legend" id="legend"></ul>
+        <div class="radar-scale" id="radar-scale" hidden></div>
       </div>
       <div id="picked" class="panel picked" aria-live="polite"></div>
     </section>
@@ -65,10 +71,6 @@
       </div>
     </section>
 
-    <section class="block" aria-labelledby="h-radar">
-      <h2 id="h-radar">비구름 레이더</h2>
-      <div class="panel radar" id="radar"></div>
-    </section>
 
     <section class="block" aria-labelledby="h-list">
       <h2 id="h-list">특보 발효 구역 목록</h2>
@@ -103,6 +105,7 @@
             <ul>
               <li>특보·예비특보: 기상청 (공공데이터포털 기상특보 조회서비스)</li>
               <li>특보구역 경계: 기상청 날씨누리 특보구역(2026-06-01 기준)을 단순화해 사용</li>
+              <li>비구름 레이더: 기상청 레이더 합성영상(5분 간격)을 같은 지도 좌표에 겹쳐 표시. 영상 자체의 해안선·경계선이 함께 보입니다</li>
               <li>열차 운행 기록: 한국철도공사 열차운행정보 (공공데이터포털)</li>
               <li>철도 노선·역 위치: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a> (ODbL), 가공해 사용. 역코드는 한국철도공사 자료와 연결</li>
             </ul>

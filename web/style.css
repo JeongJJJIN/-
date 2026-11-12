@@ -595,3 +595,19 @@ table.fit.now-table tbody th, table.fit.now-table td { white-space: nowrap; }
 .korail-frame { display: block; width: 100%; height: min(72vh, 640px); border: 0; background: var(--map-sea); }
 .frame-foot { margin: 0; padding: 10px 14px; border-top: 1px solid var(--hair); color: var(--ink-3); font-size: 13px; }
 
+/* 지도에 겹친 레이더 */
+#radar-toggle { margin-right: auto; }
+#zoom-jn { margin-right: 0; }
+.map-tools button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.radar-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 6px 10px; border-bottom: 1px solid var(--hair); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.radar-bar .chip { min-height: 32px; padding: 4px 10px; }
+.radar-layer { opacity: 0.85; pointer-events: none; image-rendering: pixelated; }
+.radar-scale { display: flex; align-items: flex-start; gap: 10px; padding: 0 14px 14px; color: var(--ink-2); font-size: 13px; }
+.radar-scale .scale-title { flex: none; line-height: 14px; }
+.radar-scale .scale-bar { display: flex; flex: 1; max-width: 420px; height: 14px; margin-bottom: 16px; border: 1px solid var(--map-line); border-radius: 3px; }
+.radar-scale .scale-bar span { position: relative; flex: 1; }
+.radar-scale .scale-bar span[data-mark]::before { content: attr(data-mark); position: absolute; top: 16px; left: 0; transform: translateX(-50%); font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+.radar-scale .scale-bar span[data-mark]::after { content: ""; position: absolute; top: 12px; left: -0.5px; width: 1px; height: 5px; background: var(--ink-3); }
+
+/* hidden 속성은 display 를 지정한 요소에서도 늘 숨긴다 */
+[hidden] { display: none !important; }

@@ -461,15 +461,52 @@ class RailPageTest(unittest.TestCase):
         app = (self.WEB / "app.js").read_text(encoding="utf-8")
         for name in set(re.findall(r'\$\("([\w-]+)"\)', app)):
             self.assertIn(f'id="{name}"', index, name)
+        self.assertIn('id="radar"', index)  # 첫 화면: 레이더 그림
+        for name in ("radar-toggle", "radar-bar", "radar-time", "radar-play", "radar-scale"):  # 철도 지도: 지도에 겹쳐 보기
+            self.assertIn(f'id="{name}"', rail, name)
         for page in (index, rail):
             self.assertIn('id="live-status"', page)
-            self.assertIn('id="radar"', page)
             self.assertLess(page.index("live.js"), max(page.find("app.js"), page.find("rail.js")))  # 실시간 모듈이 먼저 실려야 한다
         # 코레일 화면은 권한을 줄인 틀 안에 그대로 보여 준다
         frame = re.search(r"<iframe[^>]+>", rail).group(0)
         self.assertIn("https://gis.korail.com/korailTalk/entrance?route=main", frame)
         self.assertIn('sandbox="allow-scripts allow-same-origin"', frame)
         self.assertIn("title=", frame)
+
+    def test_map_projection_matches_official_forecast_grid(self):
+        """지도·레이더 좌표 계산(live.js radarProject)을 기상청 동네예보 격자(같은 도법, 5km)와 대조한다."""
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node 가 없습니다")
+        points = [[r.lon, r.lat] for r in CFG.regions] + [[126.0, 38.0], [124.7, 33.1], [131.87, 37.24]]
+        script = """
+            const fs = require('fs');
+            global.window = {}; global.document = { addEventListener() {} };
+            eval(fs.readFileSync(process.argv[1], 'utf8'));
+            const L = window.TeukboLive;
+            console.log(JSON.stringify({ image: L.RADAR_IMAGE, xy: JSON.parse(process.argv[2]).map(([lon, lat]) => L.radarProject(lon, lat)), scale: L.RADAR_SCALE.map((s) => s[0]) }));
+        """
+        result = subprocess.run([node, "-e", script, str(self.WEB / "live.js"), json.dumps(points)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        image = out["image"]
+        self.assertEqual((image["width"], image["height"]), (635, 620))
+        from teukbo.grid import latlon_to_grid
+
+        for (lon, lat), (x, y) in zip(points, out["xy"]):
+            east_km = (x - image["x0"]) * image["kmPerPx"]
+            north_km = (image["y0"] - y) * image["kmPerPx"]
+            grid = (int((east_km / 5.0 + 43 + 0.5) // 1), int((north_km / 5.0 + 136 + 0.5) // 1))
+            self.assertEqual(grid, latlon_to_grid(lat, lon), (lon, lat))
+            self.assertTrue(0 <= x <= image["width"] and 0 <= y <= image["height"], (lon, lat))  # 우리나라는 모두 영상 안에 들어온다
+        self.assertEqual(out["xy"][len(CFG.regions)], [image["x0"], image["y0"]])  # 기준점(126°E, 38°N)
+        for region, (x, y) in zip(CFG.regions, out["xy"]):
+            self.assertEqual((region.nx, region.ny), latlon_to_grid(region.lat, region.lon), region.name)
+        self.assertEqual(out["scale"], sorted(out["scale"]))  # 범례는 약한 비 → 강한 비 순서
+        self.assertEqual(len(out["scale"]), 24)
 
     def test_live_workflow(self):
         text = (ROOT / ".github" / "workflows" / "live.yml").read_text(encoding="utf-8")

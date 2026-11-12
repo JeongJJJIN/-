@@ -1,5 +1,5 @@
-/* 철도 특보 지도 — 전국 특보 구역(현재) + 철도 노선·역, 그리고 전날까지의 열차 지연 통계.
- * 지도는 외부 지도 서비스 없이 geo/*.json(특보구역·노선·역)을 직접 그린다.
+/* 철도 특보 지도 — 전국 특보 구역(현재) + 철도 노선·역 + 비구름 레이더를 한 지도에, 그리고 전날까지의 열차 지연 통계.
+ * 지도는 외부 지도 서비스 없이 geo/*.json(특보구역·노선·역)을 직접 그리고, 기상청 레이더 합성영상을 같은 좌표에 겹친다.
  * 열차의 실시간 위치는 공개 자료가 없어 표시하지 않는다(코레일 공식 화면으로 연결).
  */
 (() => {
@@ -13,13 +13,21 @@
   const HUBS = new Set(["서울", "대전", "동대구", "부산", "광주송정", "목포", "익산", "순천", "여수엑스포", "강릉", "포항", "울산", "전주", "청량리", "천안아산", "오송", "원주", "안동", "진주", "마산", "춘천"]);
   const SECOND = new Set(["용산", "수원", "평택", "천안", "조치원", "서대전", "김천(구미)", "구미", "경주", "밀양", "구포", "창원중앙", "나주", "정읍", "남원", "구례구", "곡성", "광양", "보성", "벌교", "제천", "영주", "동해", "태백", "홍성", "논산", "광명", "행신", "S수서", "동탄", "신경주", "영암", "강진", "해남", "하동", "함안", "영덕", "울진", "삼척", "정동진", "평창", "진부(오대산)", "충주", "단양", "풍기", "김천", "영동", "옥천", "장성", "함평", "무안", "일로", "몽탄", "화순", "능주", "이양", "득량", "예당", "조성", "서광주", "효천", "남평", "전남장흥", "신보성"]);
 
-  // 투영: 위도 36° 기준의 단순 등거리 투영 (우리나라 범위에서는 왜곡이 작다)
-  const K = 100, COS = Math.cos((36 * Math.PI) / 180), LON0 = 124.5, LAT1 = 38.9;
-  const X = (lon) => (lon - LON0) * COS * K;
-  const Y = (lat) => (LAT1 - lat) * K;
-  const box = (lon0, lat0, lon1, lat1) => ({ x: X(lon0), y: Y(lat1), w: X(lon1) - X(lon0), h: Y(lat0) - Y(lat1) });
+  // 투영: 기상청 레이더 합성영상과 같은 람베르트 정각원추도법(표준위도 30°·60°, 기준점 126°E 38°N, 지구 반지름 6371.00877km).
+  // 지도 좌표 = 레이더 영상(635×620)의 화소 좌표로 두어, 영상을 그대로 겹칠 수 있게 한다.
+  // 축척(1화소 = 1.708km)과 기준점의 화소 위치는 영상의 해안선·시도 경계에 경계 자료를 맞춰 구했다(98.5%가 1화소 이내, tools/radar_calibrate.py).
+  //   (계산은 live.js 의 radarProject — 테스트가 기상청 동네예보 격자 좌표와 대조한다)
+  const RADAR = window.TeukboLive.RADAR_IMAGE;
+  /** 경위도 → 지도 좌표 [x, y]. */
+  const P = window.TeukboLive.radarProject;
+  /** 경위도 범위를 덮는 지도 좌표의 사각형. */
+  const box = (lon0, lat0, lon1, lat1) => {
+    const mid = (lon0 + lon1) / 2, pts = [P(lon0, lat0), P(lon1, lat0), P(lon0, lat1), P(lon1, lat1), P(mid, lat0), P(mid, lat1)];
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  };
   const FULL = box(125.6, 33.05, 130.0, 38.65);
-  const LIMIT = box(123.8, 32.4, 132.4, 39.2);
+  const LIMIT = box(123.6, 32.3, 132.6, 39.3);
   const JEONNAM = box(126.05, 34.0, 128.3, 35.5);
 
   const Live = window.TeukboLive;
@@ -131,8 +139,8 @@
 
   // ------------------------------------------------------------ 지도
 
-  const pathOf = (rings) => rings.map((r) => { let d = ""; for (let i = 0; i < r.length; i += 2) d += `${i ? "L" : "M"}${X(r[i]).toFixed(2)} ${Y(r[i + 1]).toFixed(2)}`; return `${d}Z`; }).join("");
-  const lineOf = (pts) => { let d = ""; for (let i = 0; i < pts.length; i += 2) d += `${i ? "L" : "M"}${X(pts[i]).toFixed(2)} ${Y(pts[i + 1]).toFixed(2)}`; return d; };
+  const lineOf = (pts) => { let d = ""; for (let i = 0; i < pts.length; i += 2) { const [x, y] = P(pts[i], pts[i + 1]); d += `${i ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)}`; } return d; };
+  const pathOf = (rings) => rings.map((r) => `${lineOf(r)}Z`).join("");
 
   function drawMap() {
     const holder = clear($("map"));
@@ -160,14 +168,26 @@
       st.rank = HUBS.has(st.name) ? 0 : SECOND.has(st.name) ? 1 : 2;
       st.key = st.code || `name:${st.name}`;
       st.label = stationLabel(st.name);
-      st.x = X(st.lon);
-      st.y = Y(st.lat);
+      [st.x, st.y] = P(st.lon, st.lat);
       marks.append(s("circle", { cx: st.x.toFixed(2), cy: st.y.toFixed(2), r: st.rank === 0 ? 3.4 : st.rank === 1 ? 2.6 : 2.2, class: `st r${st.rank}`, "data-st": st.key }));
       st.text = s("text", { x: st.x.toFixed(2), y: st.y.toFixed(2), class: `lb r${st.rank}`, "data-st": st.key }, st.label);
       labels.append(st.text);
     }
     state.byRank = [...state.stations].sort((a, b) => a.rank - b.rank);
-    svg.append(s("defs", null, state.patterns), zones, casing, rail, marks, labels);
+    // 레이더 영상: 제목·범례 부분은 잘라 내고 지도 부분만 겹친다.
+    // 영상에 그려져 있는 해안선·경위선(검정)과 바탕(흰색·회색)은 색기가 없으므로, 색기가 있는 화소(비구름)만 남기고 투명하게 만든다.
+    //   d1·d2 = 채널 사이의 차(양수만 남음) → 그 합이 색기 → 불투명도.  ※ 150mm/h 이상을 뜻하는 짙은 회색은 함께 빠진다(기상청 범례의 맨 끝 단계).
+    const f = RADAR.frame, alpha = "0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  6 6 6 0 0";
+    const key = s("filter", { id: "radar-key", x: 0, y: 0, width: 1, height: 1, "color-interpolation-filters": "sRGB" },
+      s("feColorMatrix", { in: "SourceGraphic", type: "matrix", values: "1 -1 0 0 0  0 1 -1 0 0  -1 0 1 0 0  0 0 0 1 0", result: "d1" }),
+      s("feColorMatrix", { in: "SourceGraphic", type: "matrix", values: "-1 1 0 0 0  0 -1 1 0 0  1 0 -1 0 0  0 0 0 1 0", result: "d2" }),
+      s("feColorMatrix", { in: "d1", type: "matrix", values: alpha, result: "a1" }),
+      s("feColorMatrix", { in: "d2", type: "matrix", values: alpha, result: "a2" }),
+      s("feComposite", { in: "a1", in2: "a2", operator: "arithmetic", k1: 0, k2: 1, k3: 1, k4: 0, result: "mask" }),
+      s("feComposite", { in: "SourceGraphic", in2: "mask", operator: "in" }));
+    state.radarImage = s("image", { class: "radar-layer", x: 0, y: 0, width: RADAR.width, height: RADAR.height, preserveAspectRatio: "none", filter: "url(#radar-key)", "aria-hidden": "true" });
+    const radarLayer = s("g", { "clip-path": "url(#radar-clip)" }, state.radarImage);
+    svg.append(s("defs", null, state.patterns, key, s("clipPath", { id: "radar-clip" }, s("rect", { x: f.x, y: f.y, width: f.w, height: f.h }))), zones, radarLayer, casing, rail, marks, labels);
     holder.append(svg);
     state.svg = svg;
     bindMapEvents(svg);
@@ -204,7 +224,7 @@
     let { x, y, w, h: hh } = target;
     const cx = x + w / 2, cy = y + hh / 2;
     if (hh / w < ratio) hh = w * ratio; else w = hh / ratio;
-    const maxW = Math.min(LIMIT.w, LIMIT.h / ratio), minW = 8;
+    const maxW = Math.min(LIMIT.w, LIMIT.h / ratio), minW = 5;
     if (w > maxW) { w = maxW; hh = w * ratio; }
     if (w < minW) { w = minW; hh = w * ratio; }
     x = Math.min(Math.max(cx - w / 2, LIMIT.x), LIMIT.x + LIMIT.w - w);
@@ -423,6 +443,48 @@
       h("li", null, h("span", { class: "swatch line" }), "철도"), h("li", null, h("span", { class: "swatch line fast" }), "고속선"));
   }
 
+  // ------------------------------------------------------------ 비구름 레이더 (지도에 겹쳐 보기)
+
+  function setupRadar() {
+    const toggle = $("radar-toggle"), bar = $("radar-bar"), time = $("radar-time"), play = $("radar-play"), card = $("map").closest(".map-card");
+    // 강수 강도 범례: 기상청 영상의 색 그대로, 눈금은 1·5·10·30·70mm/h
+    const scale = clear($("radar-scale"));
+    const marks = new Set([1, 5, 10, 30, 70]);
+    scale.append(h("span", { class: "scale-title", text: "비 세기(mm/h)" }),
+      h("span", { class: "scale-bar", role: "img", "aria-label": "레이더 강수 강도 색: 파랑(1 미만), 초록(1~5), 노랑(5~10), 주황·빨강(10~30), 보라(30~70), 남색(70 이상)" },
+        Live.RADAR_SCALE.map(([from, color]) => h("span", { style: `background:${color}`, "data-mark": marks.has(from) ? String(from) : null }))));
+    let on = true, frame = null;
+    try { on = localStorage.getItem("teukbo.radar") !== "off"; } catch (_) { /* 저장소를 못 써도 동작한다 */ }
+    const apply = () => {
+      const visible = on && Boolean(frame);
+      toggle.setAttribute("aria-pressed", String(on));
+      card.classList.toggle("radar-on", visible);
+      bar.hidden = !on;
+      scale.hidden = !visible;
+      state.radarImage.style.display = visible ? "" : "none";
+    };
+    const radar = Live.createRadar({
+      show(found, note) {
+        frame = found;
+        state.radarImage.setAttribute("href", found.url);
+        state.radarImage.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", found.url);
+        time.textContent = `레이더 ${found.label} 관측${note}`;
+        apply();
+      },
+      missing() { frame = null; time.textContent = "레이더 영상을 불러오지 못했습니다."; apply(); },
+      playing(value) { Live.playButton(play, value); },
+    });
+    toggle.addEventListener("click", () => {
+      on = !on;
+      try { localStorage.setItem("teukbo.radar", on ? "on" : "off"); } catch (_) { /* 무시 */ }
+      if (on) radar.refresh(); else radar.stop();
+      apply();
+    });
+    play.addEventListener("click", () => radar.togglePlay());
+    apply();
+    if (on) radar.refresh();
+  }
+
   function renderList() {
     const panel = clear($("warning-list"));
     const w = state.warnings;
@@ -451,7 +513,8 @@
     const zone = state.zones[code];
     if (!zone) return;
     const [lon, lat] = zone.c, w = Math.min(state.view.w, FULL.w / 3);
-    setView({ x: X(lon) - w / 2, y: Y(lat) - (w * state.view.h) / state.view.w / 2, w, h: (w * state.view.h) / state.view.w });
+    const [cx, cy] = P(lon, lat);
+    setView({ x: cx - w / 2, y: cy - (w * state.view.h) / state.view.w / 2, w, h: (w * state.view.h) / state.view.w });
     $("map").scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
@@ -626,8 +689,8 @@
     $("zoom-out").addEventListener("click", () => zoomBy(1 / 1.6));
     $("zoom-all").addEventListener("click", () => setView({ ...FULL }));
     $("zoom-jn").addEventListener("click", () => setView({ ...JEONNAM }));
+    setupRadar();
     await loadData();
-    Live.mountRadar($("radar"));
     let liveTimer = 0;
     setInterval(() => {
       const every = Math.max(30, (liveConfig() || {}).poll_seconds || 120);

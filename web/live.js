@@ -91,7 +91,8 @@ window.TeukboLive = (() => {
   function radarFrame(back) {
     const kst = new Date(Math.floor((Date.now() + 9 * 3600000) / 300000) * 300000 - back * 300000);
     const stamp = `${kst.getUTCFullYear()}${pad(kst.getUTCMonth() + 1)}${pad(kst.getUTCDate())}${pad(kst.getUTCHours())}${pad(kst.getUTCMinutes())}`;
-    return { stamp, t: kst.getTime(), url: `${RADAR_BASE}${stamp}.png`, label: `${kst.getUTCMonth() + 1}월 ${kst.getUTCDate()}일 ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}` };
+    return { stamp, t: kst.getTime(), url: `${RADAR_BASE}${stamp}.png`, clock: `${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}`,
+      label: `${kst.getUTCMonth() + 1}월 ${kst.getUTCDate()}일 ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}` };
   }
 
   const preload = (frame) => new Promise((resolve) => {
@@ -101,7 +102,59 @@ window.TeukboLive = (() => {
     img.src = frame.url;
   });
 
-  /** 레이더 영상을 element 안에 그린다. 가장 최근 영상을 찾아 보여 주고 5분마다 새로 찾는다. */
+  /** 레이더 영상 찾기·재생을 맡는다. 그리는 일은 부르는 쪽이 한다.
+   *  handlers.show(frame, note)  — 이 영상을 보여 달라 (note: "", " (재생 중)", " (가장 최근)")
+   *  handlers.missing()          — 영상을 하나도 찾지 못했다
+   *  handlers.playing(state)     — "idle" | "loading" | "playing" */
+  function createRadar(handlers) {
+    let latest = null, timer = 0, frames = [];
+    const state = (value) => { if (handlers.playing) handlers.playing(value); };
+
+    async function refresh() {
+      if (timer) return;  // 재생 중에는 바꾸지 않는다
+      // 영상은 관측 뒤 몇 분 지나 올라온다 → 가장 최근 시각부터 거슬러 올라가며 찾는다
+      for (let back = 0; back <= 6; back++) {
+        const found = await preload(radarFrame(back));
+        if (found) {
+          if (!latest || latest.stamp !== found.stamp) { latest = found; frames = []; }
+          handlers.show(latest, "");
+          return;
+        }
+      }
+      if (!latest) handlers.missing();
+    }
+
+    function stop() {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = 0;
+      state("idle");
+      if (latest) handlers.show(latest, "");
+    }
+
+    async function togglePlay() {
+      if (timer) { stop(); return; }
+      if (!latest) return;
+      state("loading");
+      if (!frames.length) {
+        const base = Math.floor((Date.now() + 9 * 3600000) / 300000) - latest.t / 300000;  // 가장 최근 영상이 지금부터 몇 번째 이전인지
+        const wanted = [];
+        for (let k = 12; k >= 0; k--) wanted.push(radarFrame(base + k));
+        frames = (await Promise.all(wanted.map(preload))).filter(Boolean);
+      }
+      if (frames.length < 2) { state("idle"); return; }
+      let i = 0;
+      state("playing");
+      handlers.show(frames[0], " (재생 중)");
+      timer = setInterval(() => { i = (i + 1) % frames.length; handlers.show(frames[i], i === frames.length - 1 ? " (가장 최근)" : " (재생 중)"); }, 600);
+    }
+
+    setInterval(() => { if (!document.hidden) refresh(); }, 5 * 60 * 1000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+    return { refresh, togglePlay, stop };
+  }
+
+  /** 레이더 영상을 element 안에 그림 그대로 보여 준다(첫 화면용). */
   function mountRadar(element) {
     if (!element || element.dataset.mounted) return;
     element.dataset.mounted = "1";
@@ -114,56 +167,48 @@ window.TeukboLive = (() => {
     const img = el("img", { alt: "기상청 레이더 합성영상", width: "635", height: "620", decoding: "async" });
     const status = el("p", { class: "radar-time", "aria-live": "polite", text: "레이더 영상을 찾는 중…" });
     const play = el("button", { type: "button", class: "chip", "aria-pressed": "false", text: "최근 1시간 재생" });
-    const foot = el("p", { class: "official-foot" }, "기상청 레이더 합성영상(5분 간격, 강수 강도 mm/h) · ", el("a", { href: RADAR_PAGE, rel: "noopener", target: "_blank", text: "날씨누리에서 크게 보기" }));
+    const foot = el("p", { class: "official-foot" }, "기상청 레이더 합성영상(5분 간격, 강수 강도 mm/h) · ", el("a", { href: "rail.html", text: "지도에서 특보·철도와 함께 보기" }), " · ",
+      el("a", { href: RADAR_PAGE, rel: "noopener", target: "_blank", text: "날씨누리" }));
     const figure = el("div", { class: "radar-img" }, img);
     element.append(el("div", { class: "radar-head" }, status, play), figure, foot);
-
-    let latest = null, timer = 0, frames = [];
-    const show = (frame, note) => {
-      img.src = frame.url;
-      img.alt = `기상청 레이더 합성영상 ${frame.label}`;
-      status.textContent = `${frame.label} 관측${note || ""}`;
-    };
-    const stop = () => { clearInterval(timer); timer = 0; play.setAttribute("aria-pressed", "false"); play.textContent = "최근 1시간 재생"; if (latest) show(latest); };
-
-    async function refresh() {
-      if (timer) return;  // 재생 중에는 바꾸지 않는다
-      // 영상은 관측 뒤 몇 분 지나 올라온다 → 가장 최근 시각부터 거슬러 올라가며 찾는다
-      for (let back = 0; back <= 6; back++) {
-        const found = await preload(radarFrame(back));
-        if (found) {
-          if (!latest || latest.stamp !== found.stamp) { latest = found; frames = []; show(found); }
-          figure.hidden = false;
-          return;
-        }
-      }
-      if (!latest) { status.textContent = "레이더 영상을 불러오지 못했습니다. 날씨누리에서 확인하세요."; figure.hidden = true; }
-    }
-
-    play.addEventListener("click", async () => {
-      if (timer) { stop(); return; }
-      if (!latest) return;
-      play.disabled = true;
-      play.textContent = "불러오는 중…";
-      if (!frames.length) {
-        const base = Math.floor((Date.now() + 9 * 3600000) / 300000) - latest.t / 300000;  // 가장 최근 영상이 지금부터 몇 번째 이전인지
-        const wanted = [];
-        for (let k = 12; k >= 0; k--) wanted.push(radarFrame(base + k));
-        frames = (await Promise.all(wanted.map(preload))).filter(Boolean);
-      }
-      play.disabled = false;
-      if (frames.length < 2) { play.textContent = "최근 1시간 재생"; return; }
-      let i = 0;
-      play.setAttribute("aria-pressed", "true");
-      play.textContent = "멈춤";
-      show(frames[0], " (재생 중)");
-      timer = setInterval(() => { i = (i + 1) % frames.length; show(frames[i], i === frames.length - 1 ? " (가장 최근)" : " (재생 중)"); }, 600);
+    const radar = createRadar({
+      show(frame, note) { img.src = frame.url; img.alt = `기상청 레이더 합성영상 ${frame.label}`; status.textContent = `${frame.label} 관측${note}`; figure.hidden = false; },
+      missing() { status.textContent = "레이더 영상을 불러오지 못했습니다. 날씨누리에서 확인하세요."; figure.hidden = true; },
+      playing(state) { playButton(play, state); },
     });
-
-    refresh();
-    setInterval(() => { if (!document.hidden) refresh(); }, 5 * 60 * 1000);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+    play.addEventListener("click", () => radar.togglePlay());
+    radar.refresh();
   }
 
-  return { ageMinutes, fresh, load, applyToLatest, warningsSignature, windDir, ptyText, skyText, num, mountRadar };
+  /** 재생 단추의 글과 상태를 맞춘다. */
+  function playButton(button, state) {
+    button.disabled = state === "loading";
+    button.setAttribute("aria-pressed", String(state === "playing"));
+    button.textContent = state === "loading" ? "불러오는 중…" : state === "playing" ? "멈춤" : "최근 1시간 재생";
+  }
+
+  // 레이더 합성영상(635×620)의 지도 좌표: 람베르트 정각원추도법(표준위도 30°·60°, 기준점 126°E 38°N, 지구 반지름 6371.00877km)
+  // — 기상청 동네예보 격자와 같은 도법이다. 축척과 기준점의 화소 위치는 영상의 해안선·시도 경계에 맞춰 구했다(tools/radar_calibrate.py).
+  const RADAR_IMAGE = { kmPerPx: 1.708, x0: 258.0, y0: 169.75, width: 635, height: 620, frame: { x: 1, y: 21, w: 598, h: 598 } };
+  const lcc = (() => {
+    const d = Math.PI / 180, RE = 6371.00877, s1 = 30 * d, s2 = 60 * d, olon = 126 * d, olat = 38 * d;
+    const sn = Math.log(Math.cos(s1) / Math.cos(s2)) / Math.log(Math.tan(Math.PI / 4 + s2 / 2) / Math.tan(Math.PI / 4 + s1 / 2));
+    const sf = (Math.tan(Math.PI / 4 + s1 / 2) ** sn * Math.cos(s1)) / sn;
+    const ro = (RE * sf) / Math.tan(Math.PI / 4 + olat / 2) ** sn;
+    return (lon, lat) => {
+      const ra = (RE * sf) / Math.tan(Math.PI / 4 + (lat * d) / 2) ** sn, theta = (lon * d - olon) * sn;
+      return [ra * Math.sin(theta), ro - ra * Math.cos(theta)];  // 기준점에서 동쪽·북쪽으로 몇 km
+    };
+  })();
+  /** 경위도 → 레이더 영상의 화소 좌표 [x, y] (철도 지도의 지도 좌표로도 쓴다). */
+  const radarProject = (lon, lat) => { const [east, north] = lcc(lon, lat); return [RADAR_IMAGE.x0 + east / RADAR_IMAGE.kmPerPx, RADAR_IMAGE.y0 - north / RADAR_IMAGE.kmPerPx]; };
+
+  /** 레이더 강수 강도 색(기상청 영상의 범례 그대로, 약한 비 → 강한 비). [아래 경계 mm/h, 색] */
+  const RADAR_SCALE = [
+    [0, "#00c8ff"], [0.1, "#009bf5"], [0.5, "#004af5"], [1, "#00ff00"], [2, "#00be00"], [3, "#008c00"], [4, "#005a00"],
+    [5, "#ffff00"], [6, "#ffdc1f"], [7, "#f9cd00"], [8, "#e0b900"], [9, "#ccaa00"], [10, "#ff6600"], [15, "#ff3200"], [20, "#d20000"], [25, "#b40000"],
+    [30, "#e0a9ff"], [40, "#c969ff"], [50, "#b329ff"], [60, "#9300e4"], [70, "#b3b4de"], [90, "#4c4eb1"], [110, "#000390"], [150, "#333333"],
+  ];
+
+  return { ageMinutes, fresh, load, applyToLatest, warningsSignature, windDir, ptyText, skyText, num, mountRadar, createRadar, playButton, RADAR_SCALE, RADAR_IMAGE, radarProject };
 })();
