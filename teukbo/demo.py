@@ -198,7 +198,7 @@ def live_doc(cfg: Config, now: datetime, forecasts: dict[str, dict[str, ModelSer
                 t = hour + k * HOUR
                 mm = value("precip", t) or 0.0
                 text = None if mm < 0.1 else "1mm 미만" if mm < 1 else "50.0mm 이상" if mm >= 50 else "30.0~50.0mm" if mm >= 30 else f"{mm:.1f}mm"
-                rows.append({"t": iso(t), "temp": value("temp", t), "rain": text, "rain_mm": round(mm, 1), "sky": 4 if mm >= 0.1 else 3, "pty": 1 if mm >= 0.1 else 0,
+                rows.append({"t": iso(t), "temp": value("temp", t), "rain": text, "rain_mm": round(mm, 1), "pop": 90 if mm >= 1 else 60 if mm >= 0.1 else 20, "sky": 4 if mm >= 0.1 else 3, "pty": 1 if mm >= 0.1 else 0,
                              "wind": value("wind", t), "wdir": 200, "rh": int(value("rh", t) or 0), "lgt": 0.0})
             entry["fcst"] = rows
         regions[region.id] = entry

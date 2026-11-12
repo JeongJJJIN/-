@@ -33,7 +33,7 @@ def fcst_items(base_date="20261113", base_time="0030", hours=("0100", "0200", "0
     rain = rain or {}
     out = []
     for i, hhmm in enumerate(hours):
-        values = {"T1H": str(8 - i), "RN1": rain.get(hhmm, "강수없음"), "SKY": "3", "PTY": "1" if hhmm in rain else "0", "WSD": "2", "VEC": "300", "REH": "70", "LGT": "0", "UUU": "1", "VVV": "1"}
+        values = {"T1H": str(8 - i), "RN1": rain.get(hhmm, "강수없음"), "SKY": "3", "PTY": "1" if hhmm in rain else "0", "WSD": "2", "VEC": "300", "REH": "70", "LGT": "0", "UUU": "1", "VVV": "1", "POP": "70" if hhmm in rain else "10"}
         out += [{"baseDate": base_date, "baseTime": base_time, "category": k, "fcstDate": base_date, "fcstTime": hhmm, "fcstValue": v, "nx": 70, "ny": 70} for k, v in values.items()]
     return out
 
@@ -66,6 +66,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual([r["t"] for r in rows][:2], ["2026-11-13T01:00+09:00", "2026-11-13T02:00+09:00"])
         self.assertEqual([r["rain"] for r in rows], [None, "1mm 미만", "3.2mm", "30.0~50.0mm", "50.0mm 이상", None])
         self.assertEqual([r["rain_mm"] for r in rows], [0.0, 0.5, 3.2, 40.0, 50.0, 0.0])
+        self.assertEqual([r["pop"] for r in rows], [10, 70, 70, 70, 70, 10])
         self.assertEqual((rows[0]["temp"], rows[0]["sky"], rows[0]["pty"], rows[0]["wind"], rows[0]["wdir"], rows[0]["rh"], rows[0]["lgt"]), (8.0, 3, 0, 2.0, 300, 70, 0.0))
 
     def test_fcst_crossing_midnight_is_sorted_by_time(self):

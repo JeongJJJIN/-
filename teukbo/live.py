@@ -15,7 +15,7 @@ live.json
         official            그 지역의 발효 특보·예비특보 (latest.json 과 같은 형식)
         hz                  특보(종류·단계)별 공식 발표 상태 {특보 id: [상태, 단계, 발효 시각]}
         now                 지금 날씨 {temp, rain, wind, wdir, rh, pty}
-        fcst                앞으로 6시간 [{t, temp, rain, rain_mm, sky, pty, wind, wdir, rh, lgt}]
+        fcst                앞으로 6시간 [{t, temp, rain, rain_mm, pop, sky, pty, wind, wdir, rh, lgt}]
 """
 
 from __future__ import annotations

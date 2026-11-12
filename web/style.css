@@ -582,6 +582,8 @@ table.fit thead th { min-width: 3.2em; }
 .now-tiles .tile { padding: 10px 12px; }
 .now-tiles .tile .value { font-size: 24px; }
 .now-fcst { margin-top: 8px; padding-top: 6px; padding-bottom: 6px; }
+table.fit.now-table thead th { min-width: 0; white-space: nowrap; }
+table.fit.now-table tbody th, table.fit.now-table td { white-space: nowrap; }
 .now-line { margin: 8px 0 0; font-size: 15px; }
 .now-line small { color: var(--ink-3); font-size: 13px; }
 

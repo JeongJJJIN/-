@@ -272,10 +272,11 @@
         h("th", { scope: "row", text: `${fmtDayHour(row.t).replace(/^.*\) /, "")}` }),
         h("td", { text: Live.skyText(row) || "–" }),
         h("td", { text: row.temp == null ? "–" : `${Live.num(row.temp)}℃` }),
+        h("td", { text: row.pop == null ? "–" : `${row.pop}%` }),
         h("td", { class: row.rain ? "over" : null, text: row.rain || "–" }),
         h("td", { text: row.wind == null ? "–" : `${Live.num(row.wind)}m/s` })));
-      box.append(h("div", { class: "panel now-fcst" }, h("div", { class: "table-scroll" }, h("table", { class: "fit" },
-        h("thead", null, h("tr", null, ["시각", "날씨", "기온", "1시간 강수량", "풍속"].map((t) => h("th", { scope: "col", text: t })))),
+      box.append(h("div", { class: "panel now-fcst" }, h("div", { class: "table-scroll" }, h("table", { class: "fit now-table" },
+        h("thead", null, h("tr", null, [["시각"], ["날씨"], ["기온"], ["강수", "확률"], ["강수량", "1시간"], ["풍속"]].map(([t, sub]) => h("th", { scope: "col" }, t, sub ? h("small", null, sub) : null)))),
         h("tbody", null, rows)))));
     }
     box.append(h("p", { class: "note", text: "시·군청 위치의 격자 값입니다. 같은 시·군 안에서도 산지·해안은 다를 수 있습니다." }));

@@ -7,7 +7,7 @@
 - 초단기실황: 매시 정시 기준(base_time HH00), 매시 10분 이후 제공, 10분마다 최신 값으로 갱신
   T1H 기온(℃) · RN1 1시간 강수량(mm) · REH 습도(%) · PTY 강수형태 · VEC 풍향(°) · WSD 풍속(m/s)
 - 초단기예보: 매시 30분 기준(base_time HH30), 매시 45분 이후 제공, 앞으로 6시간의 시간별 예보
-  위 항목 + SKY 하늘상태 · LGT 낙뢰(kA). RN1 은 범주 문자열("강수없음", "1mm 미만", "3.2mm", "30.0~50.0mm", "50.0mm 이상")
+  위 항목 + SKY 하늘상태 · LGT 낙뢰(kA) · POP 강수확률(%, 실제 응답으로 확인). RN1 은 범주 문자열("강수없음", "1mm 미만", "3.2mm", "30.0~50.0mm", "50.0mm 이상")
 - PTY: 0 없음, 1 비, 2 비/눈, 3 눈, 5 빗방울, 6 빗방울눈날림, 7 눈날림 / SKY: 1 맑음, 3 구름많음, 4 흐림
 - +900 이상, -900 이하는 결측
 """
@@ -84,7 +84,7 @@ def parse_ncst(items: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
 
 
 def parse_fcst(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """getUltraSrtFcst 의 item 목록 → 시간순 [{t, temp, rain(문자열), rain_mm, sky, pty, wind, wdir, rh, lgt}]."""
+    """getUltraSrtFcst 의 item 목록 → 시간순 [{t, temp, rain(문자열), rain_mm, pop, sky, pty, wind, wdir, rh, lgt}]."""
     slots: dict[datetime, dict[str, Any]] = {}
     for it in items:
         try:
@@ -100,6 +100,7 @@ def parse_fcst(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             "temp": _to_float(raw.get("T1H")),
             "rain": rain_text(raw.get("RN1")),
             "rain_mm": parse_pcp(raw.get("RN1")) if raw.get("RN1") is not None else None,
+            "pop": _int(raw.get("POP")),
             "sky": _int(raw.get("SKY")),
             "pty": _int(raw.get("PTY")),
             "wind": _to_float(raw.get("WSD")),
