@@ -46,6 +46,20 @@ def main() -> int:
         missing = sorted(set(open_meteo.HOURLY_VARS.values()) - set(ms.values))
         print(f"  정상  {model.id}: {len(data)}개 지점, {iso(ms.times[0])} ~ {iso(ms.times[-1])} ({len(ms.times)}시간)")
         print(f"        변수(값 있는 시간 수): {have}" + (f" · 없는 변수: {', '.join(missing)}" if missing else ""))
+    # 과거 검증(백테스트)에 쓰는 '하루 전·이틀 전에 예측한 값'이 모델마다 실제로 오는지
+    print("\n[과거 예보 (검증용 · Open-Meteo Previous Runs)]")
+    from . import backtest
+
+    for model in (m for m in st.models if m.source == "open_meteo"):
+        try:
+            got = backtest.fetch_archive(regions, model, 60, opts, chunk=50, pause=0)
+        except FetchError as e:
+            print(f"  실패  {model.id}: {e}")
+            continue
+        for lead, ms in sorted(got[regions[0].id].items()):
+            have = ", ".join(f"{name}({sum(v is not None for v in ms.values[name])})" for name in sorted(ms.values))
+            print(f"  정상  {model.id} {lead}일 전 예측: {iso(ms.times[0])} ~ {iso(ms.times[-1])} ({len(ms.times)}시간) · {have}")
+    print()
     # 전국 수집은 지점을 여러 곳씩 묶어 요청한다 — 그 묶음 요청이 되는지 한 번 확인(전국에 고루 퍼진 지점으로)
     fetch = st.raw.get("fetch", {})
     chunk = int(fetch.get("open_meteo_chunk", 0))

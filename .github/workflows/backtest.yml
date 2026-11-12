@@ -1,0 +1,64 @@
+name: 과거 검증 (백테스트)
+
+# 지난 예보로 가능성을 다시 계산해 실제 특보 기록과 맞춰 본다 → data/backtest.json
+# - 과거 예보: Open-Meteo Previous Runs API (하루 전·이틀 전에 예측한 값). 인증키가 필요 없다.
+# - 실제 특보: data/rail/events 에 쌓아 둔 기상청 특보 발표·해제 이력.
+# 매주 한 번 다시 계산하고, 필요하면 Actions 탭에서 직접 실행한다.
+
+on:
+  schedule:
+    - cron: "40 18 * * 0" # 매주 월요일 03:40 KST
+  workflow_dispatch:
+    inputs:
+      regions:
+        description: "시험용: 전국에서 고르게 뽑은 지역 수 (0 = 전체)"
+        default: "0"
+      save:
+        description: "결과를 저장소에 저장하고 사이트를 다시 배포"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write # data/backtest.json 커밋
+  actions: write # 끝난 뒤 사이트 다시 배포(수집·계산·배포 실행)
+
+concurrency:
+  group: backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    name: 과거 검증
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 과거 예보로 다시 계산해 실제 특보와 대조 (표준 라이브러리만 사용)
+        run: python3 -m teukbo.backtest --regions "${{ inputs.regions || '0' }}" --out data/backtest.json
+
+      - name: 결과 저장
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.save }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/backtest.json
+          if git diff --cached --quiet; then
+            echo "달라진 것이 없습니다."
+            exit 0
+          fi
+          git commit -m "data: 과거 검증 $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M') KST"
+          for attempt in 1 2 3 4; do
+            if git push; then exit 0; fi
+            echo "push 실패 — 원격 변경을 받아 다시 시도합니다 (${attempt}/4)"
+            sleep $((attempt * 5))
+            git pull --rebase
+          done
+          echo "::error::검증 결과를 push 하지 못했습니다."
+          exit 1
+
+      - name: 사이트 다시 배포 (검증 결과가 화면에 나오게)
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.save }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run collect.yml --ref main

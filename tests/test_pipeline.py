@@ -307,11 +307,18 @@ class SourceCheckTest(unittest.TestCase):
             first = next(iter(forecasts[model.id].values()))
             return {r.id: forecasts[model.id].get(r.id, first) for r in regions}
 
+        from teukbo import backtest
+
+        def past(regions, model, *_a, **_kw):  # 과거 예보(검증용)도 실제로 받아 보는지
+            first = next(iter(forecasts[model.id].values()))
+            return {r.id: {1: first, 2: first} for r in regions}
+
         out = io.StringIO()
-        with mock.patch.object(open_meteo, "fetch_model", side_effect=fake), mock.patch.dict(
+        with mock.patch.object(open_meteo, "fetch_model", side_effect=fake), mock.patch.object(backtest, "fetch_archive", side_effect=past), mock.patch.dict(
             "os.environ", {"DATA_GO_KR_SERVICE_KEY": "", "KMA_APIHUB_KEY": ""}
         ), contextlib.redirect_stdout(out):
             code = check.main()
+        self.assertIn("정상  ecmwf_ifs025 2일 전 예측", out.getvalue())
         self.assertEqual(code, 0)
         self.assertIn("정상  ecmwf_ifs025", out.getvalue())
         self.assertIn("없는 변수: gust", out.getvalue())  # JMA 는 돌풍 자료가 없다
