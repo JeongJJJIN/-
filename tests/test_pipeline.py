@@ -71,11 +71,21 @@ class DemoPipelineTest(unittest.TestCase):
         self.assertEqual(detail["indicators"]["morning_drop"]["chart"], "v:temp")
         self.assertNotIn("typhoon_advisory", detail["hazards"])
 
+    def test_national_warnings_file(self):
+        doc = json.loads((self.dir / "warnings.json").read_text(encoding="utf-8"))
+        self.assertTrue(doc["available"])
+        self.assertEqual(doc["unresolved"], [])
+        pre = {(w["code"], w["type"]) for w in doc["preliminary"]}
+        self.assertIn(("L1051200", "heavy_rain"), pre)  # 순천 호우 예비특보
+        self.assertEqual(len(pre), len(doc["preliminary"]))  # 구역당 한 건(벌교·보성은 같은 구역)
+        history = json.loads(sorted((self.dir / "history").glob("*.json"))[-1].read_text(encoding="utf-8"))
+        self.assertIn("L1051200", history["runs"][-1]["nat"]["p"]["호우"])
+
     def test_site_build(self):
         out = Path(tempfile.mkdtemp()) / "_site"
         build = site.build_site(self.dir, out)
         self.assertEqual(len(build), 10)
-        for name in ("index.html", "app.js", "style.css", "sw.js", "manifest.webmanifest", "data/latest.json", "data/accuracy.json", "data/detail/suncheon.json"):
+        for name in ("index.html", "app.js", "style.css", "sw.js", "manifest.webmanifest", "data/latest.json", "data/accuracy.json", "data/warnings.json", "data/detail/suncheon.json"):
             self.assertTrue((out / name).is_file(), name)
         self.assertIn(build, (out / "sw.js").read_text(encoding="utf-8"))
         for path in out.rglob("*"):
@@ -119,6 +129,8 @@ class RealRunFailureModesTest(unittest.TestCase):
         self.assertNotIn("kma_dfs", suncheon["models"])
         history = json.loads(next((self.dir / "history").glob("*.json")).read_text(encoding="utf-8"))
         self.assertNotIn("a", history["runs"][0]["regions"]["suncheon"])
+        self.assertNotIn("nat", history["runs"][0])  # 특보 조회 실패 회차에는 전국 특보도 기록하지 않는다
+        self.assertFalse(json.loads((self.dir / "warnings.json").read_text(encoding="utf-8"))["available"])
         self.assertTrue((self.dir / "accuracy.json").is_file())
 
     def test_keys_are_read_from_environment(self):
@@ -130,7 +142,7 @@ class RealRunFailureModesTest(unittest.TestCase):
 
         def fake_warnings(regions, thresholds, now, *, data_go_kr_key, apihub_key, **_kw):
             seen["warnings"] = (data_go_kr_key, apihub_key)
-            return {}, {"ok": False, "configured": True, "provider": None, "error": "x"}
+            return {}, {"ok": False, "configured": True, "provider": None, "error": "x"}, []
 
         env = {"DATA_GO_KR_SERVICE_KEY": "abc%2Bdef%3D%3D", "KMA_APIHUB_KEY": " hubkey "}
         with mock.patch.object(open_meteo, "fetch_all", return_value=({}, {})), mock.patch.object(
@@ -195,6 +207,7 @@ class LocalModeTest(unittest.TestCase):
         self.assertEqual(r("/icons/icon-192.png"), self.web / "icons" / "icon-192.png")
         self.assertEqual(r("/data/latest.json"), self.data / "latest.json")
         self.assertEqual(r("/data/accuracy.json"), self.data / "accuracy.json")
+        self.assertEqual(r("/data/warnings.json"), self.data / "warnings.json")
         self.assertEqual(r("/data/detail/suncheon.json"), self.data / "detail" / "suncheon.json")
 
     def test_paths_refused(self):
@@ -259,7 +272,7 @@ class RepositoryHygieneTest(unittest.TestCase):
 
     def test_gitignore_excludes_deploy_only_outputs(self):
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-        for line in ("/data/latest.json", "/data/detail/", "/data-demo/", "/_site/"):
+        for line in ("/data/latest.json", "/data/warnings.json", "/data/detail/", "/data-demo/", "/_site/"):
             self.assertIn(line, ignore)
 
 

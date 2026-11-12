@@ -137,3 +137,23 @@ def generate(cfg: Config, now: datetime, events: list[datetime]) -> tuple[dict[s
         data[model.id] = {r.id: make_series(r, model.id, now, events, cfg) for r in cfg.regions}
     official = {r.id: make_official(r, now, events, cfg) for r in cfg.regions}
     return data, official
+
+
+def national_raws(cfg: Config, official: dict[str, RegionOfficial]) -> list:
+    """가상의 지역별 특보를 전국 특보 목록(말단 구역 코드 단위) 형태로 바꾼다."""
+    from .sources.kma_warnings import RawWarning
+    from .zones import load_zone_table
+
+    table = load_zone_table()
+    raws: list = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for region in cfg.regions:
+        for w in official[region.id].active + official[region.id].preliminary:
+            level_name = w.level_name if w.status == "active" else ""
+            for code in region.zone_codes:
+                if table.leaves(code) != [code] or (w.status, w.type_name, level_name, code) in seen:
+                    continue
+                seen.add((w.status, w.type_name, level_name, code))
+                raws.append(RawWarning(w.status, w.type_name, level_name, table.name(code), None, code, w.effective_from, w.issued_at, w.expected_text))
+    return raws
+

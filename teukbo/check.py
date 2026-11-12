@@ -60,7 +60,7 @@ def main() -> int:
             print(f"  정상  {status['provider']}, 발표 {status['base']}: {iso(ms.times[0])} ~ {iso(ms.times[-1])} ({len(ms.times)}시간), 변수 {', '.join(sorted(ms.values))}")
 
     print("\n[기상청 특보·예비특보]")
-    official, status = kma_warnings.fetch(cfg.regions, cfg.thresholds, now, data_go_kr_key=data_go_kr_key, apihub_key=apihub_key, http_opts=opts)
+    official, status, national = kma_warnings.fetch(cfg.regions, cfg.thresholds, now, data_go_kr_key=data_go_kr_key, apihub_key=apihub_key, http_opts=opts)
     if status.get("configured") is False:
         print("  건너뜀 (인증키 미설정)")
     elif not status["ok"]:
@@ -68,7 +68,11 @@ def main() -> int:
     else:
         active = sum(len(o.active) for o in official.values())
         prelim = sum(len(o.preliminary) for o in official.values())
-        print(f"  정상  {status['provider']}: 대상 지역 발효 {active}건, 예비특보 {prelim}건")
+        nat_active = len({(r.zone_code, r.type_name, r.level_name) for r in national if r.status == "active" and r.zone_code})
+        nat_prelim = len({(r.zone_code, r.type_name) for r in national if r.status == "preliminary" and r.zone_code})
+        print(f"  정상  {status['provider']}: 전국 발효 {nat_active}건·예비특보 {nat_prelim}건 (구역 단위), 대상 지역 발효 {active}건·예비특보 {prelim}건")
+        if status.get("unresolved"):
+            print(f"        ※ 구역 코드표에서 찾지 못한 구역 {status['unresolved']}곳 — config/warning_zones.json 갱신이 필요할 수 있습니다")
         for region in cfg.regions:
             for w in official[region.id].active + official[region.id].preliminary:
                 kind = "예비" if w.status == "preliminary" else "발효"

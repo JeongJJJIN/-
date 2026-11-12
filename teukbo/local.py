@@ -37,7 +37,7 @@ RETRY_MINUTES = 30
 PORTS = range(8000, 8011)
 GRADE_KO = {"caution": "주의", "high": "높음", "active": "발효 중"}
 # 화면이 읽는 자료만 내보낸다(이력 등 다른 파일은 제외)
-_DATA_FILES = {"latest.json", "accuracy.json"}
+_DATA_FILES = {"latest.json", "accuracy.json", "warnings.json"}
 
 
 # ---------------------------------------------------------------- 인증키

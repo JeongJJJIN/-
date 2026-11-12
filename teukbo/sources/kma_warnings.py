@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
@@ -26,6 +26,7 @@ from ..assess import OfficialWarning, RegionOfficial
 from ..config import Region, Thresholds
 from ..http import FetchError, get_bytes, get_json
 from ..timeutil import KST, parse_compact
+from ..zones import ZoneTable, load_zone_table
 from .datagokr import NoData, extract_items
 
 log = logging.getLogger("teukbo.kma_warnings")
@@ -91,21 +92,26 @@ def split_top_level(text: str, sep: str = ",") -> list[str]:
     return [p for p in parts if p]
 
 
-def parse_areas(text: str) -> list[tuple[str | None, str]]:
+def parse_areas(text: str, table: ZoneTable | None = None) -> list[tuple[str | None, str]]:
     """구역 나열 문장 → [(상위 구역 또는 None, 구역 이름), …].
 
     "전라남도(순천, 완도(여서도 제외)), 울릉도.독도"
-      → [("전라남도","순천"), ("전라남도","완도(여서도 제외)"), (None,"전라남도(순천, 완도(여서도 제외))"), (None,"울릉도.독도")]
-    괄호가 있는 항목은 '상위(하위…)' 로도, 이름 자체에 괄호가 있는 구역으로도 읽힐 수 있어 둘 다 돌려준다.
+      → [("전라남도","순천"), ("전라남도","완도(여서도 제외)"), (None,"울릉도.독도")]
+    괄호가 있는 항목은 '상위(하위…)' 일 수도, 이름 자체에 괄호가 있는 구역일 수도 있다.
+    구역 코드표(table)가 있으면 표로 가려내고, 없으면 두 가지 읽기를 모두 돌려준다.
     """
     out: list[tuple[str | None, str]] = []
     for item in split_top_level(text.strip().rstrip(".")):
         open_at = item.find("(")
-        if open_at > 0 and item.endswith(")"):
-            parent = item[:open_at].strip()
-            for sub in split_top_level(item[open_at + 1 : -1]):
-                out.append((parent, sub))
-        out.append((None, item))
+        nested = open_at > 0 and item.endswith(")")
+        pairs = [(item[:open_at].strip(), sub) for sub in split_top_level(item[open_at + 1 : -1])] if nested else []
+        if table is None:
+            out.extend(pairs)
+            out.append((None, item))
+        elif nested and not table.find(item):
+            out.extend(pairs)
+        else:
+            out.append((None, item))
     return out
 
 
@@ -122,7 +128,9 @@ def _bullets(text: str) -> list[str]:
     return [chunk.strip() for chunk in _BULLET.split(text.replace("\r", "\n")) if chunk.strip()]
 
 
-def parse_active_text(text: str | None, level_names: Sequence[str], issued_at: datetime | None = None) -> list[RawWarning]:
+def parse_active_text(
+    text: str | None, level_names: Sequence[str], issued_at: datetime | None = None, table: ZoneTable | None = None
+) -> list[RawWarning]:
     """특보 발효현황 문장(t6) → RawWarning 목록."""
     if is_none_text(text):
         return []
@@ -134,12 +142,14 @@ def parse_active_text(text: str | None, level_names: Sequence[str], issued_at: d
         type_name, level_name = split_name(parts[0], level_names)
         if not level_name:
             continue
-        for parent, zone in parse_areas(parts[1]):
+        for parent, zone in parse_areas(parts[1], table):
             out.append(RawWarning("active", type_name, level_name, zone, parent, issued_at=issued_at))
-    return out
+    return resolve_zones(out, table)
 
 
-def parse_preliminary_text(text: str | None, level_names: Sequence[str], issued_at: datetime | None = None) -> list[RawWarning]:
+def parse_preliminary_text(
+    text: str | None, level_names: Sequence[str], issued_at: datetime | None = None, table: ZoneTable | None = None
+) -> list[RawWarning]:
     """예비특보 현황 문장(t7 / getWthrPwn 의 pwn) → RawWarning 목록."""
     if is_none_text(text):
         return []
@@ -153,8 +163,35 @@ def parse_preliminary_text(text: str | None, level_names: Sequence[str], issued_
             parts = _COLON.split(" ".join(chunk.split()), maxsplit=1)
             if len(parts) != 2:
                 continue
-            for parent, zone in parse_areas(parts[1]):
+            for parent, zone in parse_areas(parts[1], table):
                 out.append(RawWarning("preliminary", type_name, level_name, zone, parent, issued_at=issued_at, expected_text=parts[0]))
+    return resolve_zones(out, table)
+
+
+def resolve_zones(raws: Sequence[RawWarning], table: ZoneTable | None) -> list[RawWarning]:
+    """구역 이름·상위 구역 코드를 말단 구역 코드로 바꾼다. 도 전체에 내려진 특보는 그 도의 모든 구역으로 펼친다.
+
+    표에서 찾지 못한 구역은 코드 없이 그대로 둔다(지역 연결은 이름으로 한 번 더 시도한다).
+    """
+    if table is None:
+        return list(raws)
+    out: list[RawWarning] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for raw in raws:
+        if raw.zone_code:
+            codes = table.leaves(raw.zone_code) or [raw.zone_code]
+        else:
+            codes = table.resolve(raw.zone_name, raw.parent_name)
+        if not codes:
+            out.append(raw)
+            continue
+        for code in codes:
+            key = (raw.status, raw.type_name, raw.level_name, raw.expected_text, code)
+            if key in seen:
+                continue
+            seen.add(key)
+            keep_name = raw.zone_code == code and raw.zone_name
+            out.append(replace(raw, zone_code=code, zone_name=raw.zone_name if keep_name else table.name(code)))
     return out
 
 
@@ -226,7 +263,7 @@ def assign_to_regions(raws: Sequence[RawWarning], regions: Sequence[Region], thr
 # ---------------------------------------------------------------- 공공데이터포털
 
 
-def _datagokr_status(key: str, level_names: Sequence[str], http_opts: Mapping[str, Any]) -> list[RawWarning]:
+def _datagokr_status(key: str, level_names: Sequence[str], http_opts: Mapping[str, Any], table: ZoneTable | None = None) -> list[RawWarning]:
     payload = get_json(
         f"{DATA_GO_KR_BASE}/getPwnStatus",
         {"serviceKey": key, "pageNo": 1, "numOfRows": 10, "dataType": "JSON"},
@@ -239,8 +276,8 @@ def _datagokr_status(key: str, level_names: Sequence[str], http_opts: Mapping[st
     item = items[0]
     issued = parse_compact(str(item.get("tmFc", "")))
     t6, t7 = str(item.get("t6") or ""), str(item.get("t7") or "")
-    active = parse_active_text(t6, level_names, issued)
-    prelim = parse_preliminary_text(t7, level_names, issued)
+    active = parse_active_text(t6, level_names, issued, table)
+    prelim = parse_preliminary_text(t7, level_names, issued, table)
     # 문장이 있는데 한 건도 읽지 못했다면 형식이 바뀐 것이다. '특보 없음'으로 잘못 표시하지 않도록 실패 처리한다.
     if not is_none_text(t6) and not active:
         raise FetchError("특보현황: 발효현황 문장을 해석하지 못했습니다 — " + " ".join(t6.split())[:120])
@@ -295,37 +332,22 @@ def _datagokr_start_times(key: str, now: datetime, http_opts: Mapping[str, Any])
     return found
 
 
-def _with_start_times(raws: list[RawWarning], starts: Mapping[tuple[str, str, str], datetime], regions: Sequence[Region], now: datetime) -> list[RawWarning]:
-    """통보문에서 읽은 발효 중 특보에, 이력에서 찾은 발효 시각을 붙인다(구역 이름 → 코드로 연결)."""
+def _with_start_times(raws: list[RawWarning], starts: Mapping[tuple[str, str, str], datetime], now: datetime) -> list[RawWarning]:
+    """통보문에서 읽은 발효 중 특보에, 발표 이력에서 찾은 발효 시각을 구역 코드로 붙인다."""
     if not starts:
         return raws
-    name_to_codes: dict[str, set[str]] = {}
-    for region in regions:
-        zone_pairs = list(zip(region.zone_names, region.zone_codes))
-        for name, code in zone_pairs:
-            for variant in _variants([name]):
-                name_to_codes.setdefault(variant, set()).add(code)
     out: list[RawWarning] = []
     for raw in raws:
-        start = None
-        if raw.status == "active":
-            for code in name_to_codes.get(_norm(raw.zone_name), ()):
-                candidate = starts.get((code, raw.type_name, raw.level_name))
-                if candidate and candidate <= now + timedelta(hours=48) and (start is None or candidate > start):
-                    start = candidate
-        out.append(
-            RawWarning(raw.status, raw.type_name, raw.level_name, raw.zone_name, raw.parent_name, raw.zone_code, start, raw.issued_at, raw.expected_text)
-            if start
-            else raw
-        )
+        start = starts.get((raw.zone_code, raw.type_name, raw.level_name)) if raw.status == "active" and raw.zone_code else None
+        out.append(replace(raw, effective_from=start) if start and start <= now + timedelta(hours=48) else raw)
     return out
 
 
-def fetch_datagokr(key: str, regions: Sequence[Region], thresholds: Thresholds, now: datetime, http_opts: Mapping[str, Any]) -> list[RawWarning]:
+def fetch_datagokr(key: str, thresholds: Thresholds, now: datetime, http_opts: Mapping[str, Any], table: ZoneTable | None = None) -> list[RawWarning]:
     level_names = [str(v["name"]) for v in thresholds.levels.values()]
-    raws = _datagokr_status(key, level_names, http_opts)
+    raws = _datagokr_status(key, level_names, http_opts, table)
     if any(r.status == "active" for r in raws):
-        raws = _with_start_times(raws, _datagokr_start_times(key, now, http_opts), regions, now)
+        raws = _with_start_times(raws, _datagokr_start_times(key, now, http_opts), now)
     return raws
 
 
@@ -468,20 +490,23 @@ def fetch(
     data_go_kr_key: str | None,
     apihub_key: str | None,
     http_opts: Mapping[str, Any] | None = None,
-) -> tuple[dict[str, RegionOfficial], dict[str, Any]]:
-    """현재 발효 특보·예비특보를 지역별로 돌려준다. 반환: (지역 id → RegionOfficial, 상태 정보).
+    table: ZoneTable | None = None,
+) -> tuple[dict[str, RegionOfficial], dict[str, Any], list[RawWarning]]:
+    """현재 발효 특보·예비특보. 반환: (지역 id → RegionOfficial, 상태 정보, 전국 특보 목록).
 
+    전국 특보 목록은 말단 특보구역 코드 단위의 RawWarning 이다(지도 표시·이력용).
     조회에 실패하면 모든 지역이 available=False — 화면에서는 '없음'이 아니라 '확인 불가'로 표시해야 한다.
     """
     opts = http_opts or {}
+    table = table or load_zone_table()
     unavailable = {r.id: RegionOfficial(available=False) for r in regions}
     providers: list[tuple[str, Any]] = []
     if data_go_kr_key:
-        providers.append(("공공데이터포털", lambda: fetch_datagokr(data_go_kr_key, regions, thresholds, now, opts)))
+        providers.append(("공공데이터포털", lambda: fetch_datagokr(data_go_kr_key, thresholds, now, opts, table)))
     if apihub_key:
-        providers.append(("기상청 API허브", lambda: fetch_apihub(apihub_key, opts)))
+        providers.append(("기상청 API허브", lambda: resolve_zones(fetch_apihub(apihub_key, opts), table)))
     if not providers:
-        return unavailable, {"ok": False, "configured": False, "provider": None, "error": "인증키 미설정"}
+        return unavailable, {"ok": False, "configured": False, "provider": None, "error": "인증키 미설정"}, []
 
     errors: list[str] = []
     for name, call in providers:
@@ -492,7 +517,10 @@ def fetch(
             log.error("특보 조회(%s) 실패: %s", name, e)
             continue
         official = assign_to_regions(raws, regions, thresholds)
-        log.info("특보 조회(%s): 전국 %d건 중 대상 지역 발효 %d건·예비 %d건", name, len(raws),
+        unresolved = sorted({f"{r.parent_name}({r.zone_name})" if r.parent_name else r.zone_name for r in raws if not r.zone_code})
+        if unresolved:
+            log.warning("구역 코드표에서 찾지 못한 특보구역 %d곳: %s", len(unresolved), ", ".join(unresolved[:10]))
+        log.info("특보 조회(%s): 전국 %d건(구역 단위) 중 대상 지역 발효 %d건·예비 %d건", name, len(raws),
                  sum(len(o.active) for o in official.values()), sum(len(o.preliminary) for o in official.values()))
-        return official, {"ok": True, "configured": True, "provider": name, "error": None}
-    return unavailable, {"ok": False, "configured": True, "provider": None, "error": " / ".join(errors)}
+        return official, {"ok": True, "configured": True, "provider": name, "error": None, "unresolved": len(unresolved)}, list(raws)
+    return unavailable, {"ok": False, "configured": True, "provider": None, "error": " / ".join(errors)}, []

@@ -315,7 +315,7 @@ class WarningTextTest(unittest.TestCase):
             return {"response": {"header": {"resultCode": "00"}, "body": {"items": {"item": [item]}, "totalCount": 1}}}
 
         with mock.patch.object(kma_warnings, "get_json", side_effect=fake):
-            official, status = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key="k", apihub_key=None)
+            official, status, national = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key="k", apihub_key=None)
         self.assertEqual((status["ok"], status["provider"]), (True, "공공데이터포털"))
         rain = next(w for w in official["suncheon"].active if w.type_name == "호우")
         self.assertEqual(rain.effective_from, kst(2026, 11, 12, 18))
@@ -327,14 +327,106 @@ class WarningTextTest(unittest.TestCase):
             return {"response": {"header": {"resultCode": "00"}, "body": {"items": {"item": [item]}, "totalCount": 1}}}
 
         with mock.patch.object(kma_warnings, "get_json", side_effect=fake):
-            official, status = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key="k", apihub_key=None)
+            official, status, national = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key="k", apihub_key=None)
         self.assertFalse(status["ok"])
         self.assertFalse(official["suncheon"].available)  # '특보 없음'이 아니라 '확인 불가'
 
     def test_no_keys(self):
-        official, status = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key=None, apihub_key=None)
+        official, status, national = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key=None, apihub_key=None)
         self.assertEqual((status["ok"], status["configured"]), (False, False))
         self.assertFalse(official["suncheon"].available)
+
+
+class ZoneTableTest(unittest.TestCase):
+    """전국 특보구역 코드표로 이름을 코드로 바꾸는 경로 (실제 운영 경로)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from teukbo.zones import load_zone_table
+
+        cls.table = load_zone_table()
+
+    def test_table_shape(self):
+        self.assertEqual(len(self.table), 414)
+        self.assertEqual(len(self.table.leaf_codes(land_only=True)), 235)  # 2026-06-01 개편: 육상 235개 구역
+
+    def test_resolve_names(self):
+        r = self.table.resolve
+        self.assertEqual(r("순천", "전라남도"), ["L1051200"])
+        self.assertEqual(r("순천시", "전라남도"), ["L1051200"])  # 정식 이름으로 적혀도
+        self.assertEqual(r("완도(여서도 제외)", "전라남도"), ["L1053310"])
+        self.assertEqual(r("고성", "강원도"), ["L1022210", "L1022220"])  # 세분 구역으로 펼침
+        self.assertEqual(r("고성", "경상남도"), ["L1082300"])
+        self.assertEqual(r("고성"), [])  # 상위 구역 없이는 어느 고성인지 알 수 없다
+        self.assertEqual(r("광주"), ["L1130110", "L1130120"])  # 광주광역시 (경기 광주가 아님)
+        self.assertEqual(r("광주", "경기도"), ["L1013400"])
+        self.assertEqual(r("울릉도.독도"), ["L1072100"])
+        self.assertEqual(r("흑산도.홍도"), ["L1052500"])
+        self.assertEqual(r("순천", "경상남도"), [])
+        self.assertEqual(len(r("전라남도")), 31)
+        self.assertEqual(r("서해남부북쪽바깥먼바다"), ["S1232120"])
+
+    def test_text_is_resolved_to_leaf_codes(self):
+        raws = kma_warnings.parse_active_text(T6, LEVELS, None, self.table)
+        self.assertTrue(all(r.zone_code for r in raws))  # 전부 코드로 바뀜
+        by_name = {}
+        for r in raws:
+            by_name.setdefault(r.type_name + r.level_name, []).append(r.zone_code)
+        self.assertEqual(by_name["강풍주의보"], ["L1052600", "L1053320", "L1090500", "L1091000"])
+        self.assertEqual(by_name["풍랑주의보"], ["S1232120", "S1322100"])
+        self.assertEqual(by_name["폭염중대경보"], ["L1072610"])
+        self.assertEqual(len(by_name["건조주의보"]), 31)  # '전라남도' → 전남의 모든 구역
+        self.assertEqual(len(set(by_name["호우주의보"])), 6)
+
+    def test_regions_from_resolved_codes(self):
+        raws = kma_warnings.parse_active_text(T6, LEVELS, None, self.table)
+        official = kma_warnings.assign_to_regions(raws, CFG.regions, CFG.thresholds)
+
+        def names(rid):
+            return {(w.type_name + w.level_name, w.zone_name) for w in official[rid].active}
+
+        self.assertEqual(names("suncheon"), {("호우주의보", "순천"), ("건조주의보", "순천")})
+        self.assertEqual(names("yeosu"), {("강풍주의보", "거문도.초도"), ("호우주의보", "거문도.초도"), ("건조주의보", "여수·거문도.초도")})
+        self.assertEqual(names("goheung"), {("호우주의보", "고흥북부"), ("건조주의보", "고흥북부·고흥남부")})
+        self.assertEqual(names("beolgyo"), {("건조주의보", "보성")})
+        self.assertEqual(names("sinan"), {("건조주의보", "신안(흑산면제외)")})  # 흑산도.홍도는 '전라남도'에 포함되지 않는 별도 구역
+
+    def test_preliminary_resolved(self):
+        raws = kma_warnings.parse_preliminary_text(T7, LEVELS, None, self.table)
+        codes = {(r.type_name, r.zone_code, r.expected_text) for r in raws}
+        self.assertIn(("호우", "L1051200", "11월 13일 오전(06시~12시)"), codes)
+        self.assertIn(("호우", "L1053010", "11월 13일 오후(12시~18시)"), codes)  # 구례평지
+        hadong = self.table.resolve("하동", "경상남도")  # 대상 지역 밖의 구역도 전국 목록에는 들어간다
+        self.assertTrue(hadong)
+        self.assertTrue(all(("호우", code, "11월 13일 오전(06시~12시)") in codes for code in hadong))
+
+    def test_unknown_zone_is_kept_without_code(self):
+        raws = kma_warnings.parse_active_text("o 호우주의보 : 전라남도(순천, 새로생긴구역)", LEVELS, None, self.table)
+        self.assertEqual([(r.zone_name, r.zone_code) for r in raws], [("순천", "L1051200"), ("새로생긴구역", None)])
+
+    def test_apihub_parent_code_is_expanded(self):
+        rows = [{"REG_UP": "L1000000", "REG_UP_KO": "전국", "REG_ID": "L1053100", "REG_KO": "고흥군", "TM_FC": "202611121700", "TM_EF": "202611121800", "WRN": "호우", "LVL": "주의", "CMD": "발표", "ED_TM": ""}]
+        raws = kma_warnings.resolve_zones(kma_warnings.parse_apihub_now(rows), self.table)
+        self.assertEqual([(r.zone_code, r.zone_name) for r in raws], [("L1053110", "고흥북부"), ("L1053120", "고흥남부")])
+        self.assertTrue(all(r.effective_from == kst(2026, 11, 12, 18) for r in raws))
+
+    def test_fetch_returns_national_list_with_start_time(self):
+        def fake(url, params, **_kw):
+            if url.endswith("getPwnStatus"):
+                item = {"t6": T6, "t7": T7, "tmFc": 202611121700, "tmEf": "202611121800", "other": "o 없음"}
+            elif params["fromTmFc"] != "20261112":
+                return {"response": {"header": {"resultCode": "03", "resultMsg": "NO_DATA"}}}
+            else:
+                item = {"areaCode": "L1051200", "cancel": "0", "command": "1", "tmFc": 202611121700, "warnVar": 2, "warnStress": 0, "startTime": 202611121800}
+            return {"response": {"header": {"resultCode": "00"}, "body": {"items": {"item": [item]}, "totalCount": 1}}}
+
+        with mock.patch.object(kma_warnings, "get_json", side_effect=fake):
+            official, status, national = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key="k", apihub_key=None)
+        self.assertEqual(status["unresolved"], 0)
+        rain = next(r for r in national if r.zone_code == "L1051200" and r.type_name == "호우" and r.status == "active")
+        self.assertEqual(rain.effective_from, kst(2026, 11, 12, 18))
+        self.assertTrue(any(r.zone_code == "L1072610" for r in national))  # 대상 지역 밖(경북)도 전국 목록에는 있다
+        self.assertEqual(next(w for w in official["suncheon"].active if w.type_name == "호우").effective_from, kst(2026, 11, 12, 18))
 
 
 APIHUB_ROWS = [
@@ -386,7 +478,7 @@ class ApiHubWarningTest(unittest.TestCase):
         with mock.patch.object(kma_warnings, "get_json", side_effect=fake_json), mock.patch.object(
             kma_warnings, "get_bytes", return_value=json.dumps(APIHUB_ROWS, ensure_ascii=False).encode("utf-8")
         ) as hub:
-            official, status = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key="k1", apihub_key="k2")
+            official, status, national = kma_warnings.fetch(CFG.regions, CFG.thresholds, kst(2026, 11, 12, 21), data_go_kr_key="k1", apihub_key="k2")
         self.assertEqual((status["ok"], status["provider"]), (True, "기상청 API허브"))
         self.assertEqual(hub.call_args.args[1]["disp"], 1)
         self.assertTrue(official["mokpo"].available)
