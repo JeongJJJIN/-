@@ -34,11 +34,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # 작업용 가지에서 직접 실행하면 호우특보 연구(분석만, 아무것도 저장하지 않음)를 돌린다
+      - name: 호우특보 사전 포착 연구 (작업용 가지에서만)
+        if: ${{ github.ref != 'refs/heads/main' }}
+        run: python3 tools/rain_study.py --regions "${{ inputs.regions || '0' }}"
+
       - name: 과거 예보로 다시 계산해 실제 특보와 대조 (표준 라이브러리만 사용)
+        if: ${{ github.ref == 'refs/heads/main' }}
         run: python3 -m teukbo.backtest --regions "${{ inputs.regions || '0' }}" --out data/backtest.json
 
       - name: 결과 저장
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.save }}
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.save) }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -58,7 +64,7 @@ jobs:
           exit 1
 
       - name: 사이트 다시 배포 (검증 결과가 화면에 나오게)
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.save }}
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.save) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run collect.yml --ref main
