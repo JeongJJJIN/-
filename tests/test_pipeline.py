@@ -500,11 +500,16 @@ class LocalModeTest(unittest.TestCase):
         import re as re_mod
         from datetime import datetime, timezone
 
+        from teukbo import schedule
+
         trigger, _ = self._trigger({})
         text = (ROOT / ".github" / "workflows" / "collect.yml").read_text(encoding="utf-8")
-        minute, hours = re_mod.search(r'cron: "(\d+) ([\d,]+) \* \* \*"', text).groups()
-        self.assertEqual((trigger.collect_minute, trigger.collect_hours), (int(minute), sorted(int(h) for h in hours.split(","))))  # 설정과 예약이 같아야 한다
+        # 워크플로는 30분마다 확인만 하고, 실제로 도는 시각은 설정 파일의 것 하나다(teukbo/schedule.py 가 같은 설정을 읽는다)
+        self.assertTrue(re_mod.search(r'cron: "25,55 \* \* \* \*"', text))
+        self.assertIn("python3 -m teukbo.schedule", text)
         at = lambda h, m, d=13: datetime(2026, 11, d, h, m, tzinfo=timezone.utc)  # noqa: E731
+        for when in (at(17, 24), at(17, 25), at(1, 0)):
+            self.assertEqual(trigger.collect_slot(when), schedule.latest_slot(when, trigger.collect_hours, trigger.collect_minute))
         self.assertEqual(trigger.collect_slot(at(17, 24)), at(14, 25))
         self.assertEqual(trigger.collect_slot(at(17, 25)), at(17, 25))
         self.assertEqual(trigger.collect_slot(at(1, 0)), at(23, 25, 12))  # 자정을 넘겨도 어제의 마지막 회차
