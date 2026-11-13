@@ -4,6 +4,7 @@ name: 수집·계산·배포
 # 예약 실행은 기본 브랜치(main)에서만 동작합니다.
 # GitHub 의 예약은 한 시간 넘게 늦거나 아예 빠지는 일이 있어, 예약은 30분마다 걸고 실제 수집은 '정해진 시각이 지났는데
 # 아직 그 회차를 돌리지 않았을 때'만 한다(teukbo/schedule.py). 때가 아니면 아무 자료도 받지 않고 몇 초 만에 끝난다.
+# 예약이 몇 시간씩 오지 않는 때를 대비해, 실시간 수집(live.yml)도 돌 때마다 같은 판단을 해서 밀렸으면 이 워크플로를 시작시킨다.
 
 on:
   schedule:
@@ -12,6 +13,11 @@ on:
     # 예약은 매시 25분·55분: 25분 예약이 제시간에 오면 그때 돌고, 늦거나 빠지면 다음 예약이 따라잡는다.
     - cron: "25,55 * * * *"
   workflow_dispatch:
+    inputs:
+      if_due:
+        description: "자동 신호용 — 정해진 시각이 지났고 아직 그 회차를 돌리지 않았을 때만 돈다. 직접 돌릴 때는 꺼 두세요(끄면 바로 돌립니다)."
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -44,10 +50,11 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
 
-      - name: 지금 돌릴 때인지 확인 (예약 실행일 때만 — 직접 실행·코드 변경은 늘 돈다)
+      # 실시간 수집(live.yml)이 '밀렸다'고 보고 보낸 신호(if_due)도 여기서 한 번 더 확인한다: 같은 회차를 두 번 계산하지 않는다.
+      - name: 지금 돌릴 때인지 확인 (예약 실행·자동 신호일 때만 — 직접 실행·코드 변경은 늘 돈다)
         id: due
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.if_due }}" = "true" ]; then
             python3 -m teukbo.schedule
           else
             echo "run=true" >> "$GITHUB_OUTPUT"

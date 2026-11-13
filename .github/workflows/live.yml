@@ -5,6 +5,9 @@ name: 실시간 자료 (특보·지금 날씨)
 # - GitHub 의 예약 실행은 가장 짧아야 5분 간격이고, 사정에 따라 더 늦게 시작될 수 있다(보장되지 않음).
 # - 위 주소는 GitHub 쪽에서 최대 5분 동안 같은 내용을 돌려준다. → 화면에 반영되기까지 보통 5~10분.
 # - 화면은 '확인 시각'을 보고, 오래된 값은 쓰지 않고 지연을 알린다(config/settings.json 의 live.stale_after_minutes).
+# - GitHub 의 예약은 몇 시간씩 오지 않을 때가 있다(2026-11-13: 18시간 동안 3번). 제때 돌리려면 바깥 시계가 5분마다
+#   이 워크플로에 '실행' 신호를 보내게 한다 — tools/cloud_clock.gs (README '공개 사이트를 제때 갱신하게 하기').
+# - 끝에서 3시간 주기의 수집·계산이 밀렸는지 보고, 밀렸으면 시작시킨다(teukbo/schedule.py). 그래서 바깥 시계는 이 워크플로 하나만 깨우면 된다.
 
 on:
   schedule:
@@ -13,6 +16,7 @@ on:
 
 permissions:
   contents: write # live 브랜치에 올리기
+  actions: write # 밀린 수집·계산(collect.yml) 시작시키기
 
 concurrency:
   group: live-data
@@ -65,3 +69,11 @@ jobs:
           done
           echo "::error::실시간 자료를 올리지 못했습니다."
           exit 1
+
+      # 실시간 수집이 실패했어도 본다. 이 단계의 실패는 무시한다(다음 차례에 다시 본다).
+      - name: 3시간 주기의 수집·계산이 밀렸으면 시작시키기
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -m teukbo.schedule --start-collect
