@@ -7,8 +7,9 @@
 2. 그때의 예보: Open-Meteo Previous Runs API 에서 '그 시각의 값을 하루 전·이틀 전에 예측한 값'을 받는다.
 3. 다시 계산: 6시간마다 그 시점으로 돌아가(재현 시점), 그때 볼 수 있었던 예보만으로 지금과 똑같은 계산식
    (teukbo.assess)을 돌려 지역별 가능성을 낸다.
-4. 맞춰 보기: 적중률 집계(teukbo.accuracy)를 그대로 써서 사전 포착률·오경보율을 내고,
-   가능성 구간별로 실제 특보가 뒤따른 비율(보정표)을 만든다.
+4. 맞춰 보기: 실제 특보마다 12·24시간 전 재현에서 '주의' 이상이었는지(사전 포착률)를 보고,
+   가능성 구간별로 48시간 안에 실제 특보가 뒤따른 비율(보정표)을 만든다. '주의'·'높음'이 맞은 비율도 이 표에서 나온다.
+   실제 특보의 시작 시각은 재현 시점이 아니라 기상청 발표 기록의 발효 시각을 쓴다 — 재현 시점 사이에 났다가 끝난 짧은 특보도 빠지지 않는다.
 
 정직하게 적어 둘 조건
 - 미래를 훔쳐보지 않는다: 재현 시점 T 에서, T+24시간까지는 '하루 전에 예측한 값', 그 뒤 T+48시간까지는
@@ -25,8 +26,8 @@ import logging
 import multiprocessing
 import os
 import sys
-import tempfile
 import time
+from bisect import bisect_right
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -279,6 +280,79 @@ def replay(cfg: Config, archive: Mapping[str, Any], truth: Mapping[str, Any], ti
     return runs, table, days
 
 
+# ---------------------------------------------------------------- 실제 특보 '건'과 사전 포착
+
+
+def truth_events(cfg: Config, truth: Mapping[str, Sequence[tuple[str, str, datetime, datetime | None, str]]]) -> list[dict[str, Any]]:
+    """지역별 실제 특보 '건': 그 지역에 특보가 새로 발효되었거나 단계가 올라간 때(기상청 발표 기록의 발효 시각).
+
+    한 지역은 말단 구역·시군·도 단위의 발표를 모두 받으므로, 같은 종류의 같은 단계 이상이 이미 발효 중일 때 겹쳐 내려진 발표나
+    이어서 다시 내려진 발표, 단계가 내려간 것은 새 '건'이 아니다. 계산하지 않는 종류(태풍 등 공식 발표만 보는 것)는 뺀다.
+    """
+    th = cfg.thresholds
+    by_key = {(h.type, h.level): h for h in th.hazards if h.method == "model"}
+    out: list[dict[str, Any]] = []
+    for rid, rows in truth.items():
+        seen: set[tuple[str, datetime]] = set()
+        for type_id, level, start, _, _ in rows:
+            hazard = by_key.get((type_id, level))
+            if hazard is None or (hazard.id, start) in seen:
+                continue
+            rank = th.level_rank(level)
+            covered = False
+            for other_type, other_level, s2, e2, _ in rows:
+                if other_type != type_id:
+                    continue
+                r2 = th.level_rank(other_level)
+                if (r2 >= rank and s2 < start and (e2 is None or e2 >= start)) or (r2 > rank and s2 == start):
+                    covered = True
+                    break
+            if covered:
+                continue
+            seen.add((hazard.id, start))
+            out.append({"region": rid, "hazard": hazard.id, "type": type_id, "time": start})
+    out.sort(key=lambda e: (e["time"], e["region"], e["hazard"]))
+    return out
+
+
+def capture_counts(runs: Sequence[Mapping[str, Any]], events: Sequence[Mapping[str, Any]], leads: Sequence[int]) -> tuple[dict[str, dict[str, int]], dict[str, dict[str, dict[str, int]]]]:
+    """실제 특보마다, 발효 lead 시간 전(그보다 늦지 않은 가장 가까운 재현)에 그 지역·그 특보가 '주의' 이상이었는지 센다.
+
+    재현은 STEP_HOURS 간격이므로 '24시간 전'은 발효 24~30시간 전의 재현이다(더 오래된 쪽 — 불리한 조건).
+    반환: (전체 {lead: {events, captured}}, 종류별 같은 모양)
+    """
+    times = [parse_iso(run["t"]) for run in runs]
+    step = timedelta(hours=STEP_HOURS)
+    blank = lambda: {str(lead): {"events": 0, "captured": 0} for lead in leads}  # noqa: E731
+    total, by_type = blank(), {}
+    for ev in events:
+        for lead in leads:
+            target = ev["time"] - timedelta(hours=lead)
+            i = bisect_right(times, target) - 1
+            if i < 0 or target - times[i] >= step:
+                continue  # 그 시점의 재현이 없다
+            grade = accuracy._model_grade(dict(runs[i]), ev["region"], ev["hazard"])
+            if grade is None or grade == "unknown":
+                continue  # 그 지역의 예보 자료가 없었다
+            for bucket in (total, by_type.setdefault(ev["type"], blank())):
+                bucket[str(lead)]["events"] += 1
+                if grade in accuracy._ALERT_GRADES:
+                    bucket[str(lead)]["captured"] += 1
+    return total, by_type
+
+
+def alert_counts(cells: Sequence[Sequence[int]], cfg: Config) -> dict[str, dict[str, Any]]:
+    """보정표에서 '주의' 이상·'높음' 표시가 몇 번이었고 그 가운데 몇 번이 48시간 안에 실제 특보로 이어지지 않았는지(오경보)."""
+    grades = cfg.settings.raw["grades"]
+
+    def above(minimum: float) -> dict[str, Any]:
+        picked = [cells[i] for i, (lo, _, _) in enumerate(BUCKETS) if lo >= minimum]
+        alerts, hits = sum(c[0] for c in picked), sum(c[1] for c in picked)
+        return {"alerts": alerts, "false": alerts - hits, "rate": _rate(alerts - hits, alerts)}
+
+    return {"caution_or_higher": above(grades["caution_min"]), "high": above(grades["high_min"])}
+
+
 # ---------------------------------------------------------------- 결과 문서
 
 
@@ -293,13 +367,10 @@ def calibration_rows(cells: Sequence[Sequence[int]], days: Mapping[int, set[str]
 
 def build_document(cfg: Config, runs: Sequence[dict[str, Any]], table: Mapping[str, Any], days: Mapping[str, Any], truth: Mapping[str, Any],
                    models: Sequence[str], regions_used: int, now: datetime) -> dict[str, Any]:
-    """재현한 회차들을 적중률 집계에 그대로 넣고, 보정표를 붙인다."""
+    """재현한 회차·보정표·실제 특보 기록으로 결과 문서를 만든다."""
     th = cfg.thresholds
-    with tempfile.TemporaryDirectory() as tmp:
-        for run in runs:
-            storage.append_history(Path(tmp), run, parse_iso(run["t"]))
-        last = parse_iso(runs[-1]["t"]) if runs else now
-        result = accuracy.compute_accuracy(Path(tmp), cfg, last + timedelta(hours=1))
+    leads = sorted(int(x) for x in cfg.settings.accuracy.get("lead_hours", [12, 24]))
+    blank_cells = [[0, 0] for _ in BUCKETS]
     total = [[0, 0] for _ in BUCKETS]
     all_days: dict[int, set[str]] = {}
     for type_id, cells in table.items():
@@ -309,27 +380,52 @@ def build_document(cfg: Config, runs: Sequence[dict[str, Any]], table: Mapping[s
         for b, names in (days.get(type_id) or {}).items():
             all_days.setdefault(b, set()).update(names)
     first, end = (runs[0]["t"], runs[-1]["t"]) if runs else (None, None)
-    event_days = sorted({start.strftime("%Y-%m-%d") for rows in truth.values() for _, _, start, _, _ in rows
-                         if first and parse_iso(first) <= start <= parse_iso(end) + timedelta(hours=cfg.settings.horizon_hours)})
+
+    # 실제 특보 '건': 모든 lead 에 대해 그 시점의 재현이 있는 것만 센다(재현 구간의 처음·끝에 걸친 특보는 뺀다)
+    events: list[dict[str, Any]] = []
+    if runs and leads:
+        lo, hi = parse_iso(first) + timedelta(hours=leads[-1]), parse_iso(end) + timedelta(hours=leads[0])
+        events = [ev for ev in truth_events(cfg, truth) if lo <= ev["time"] <= hi]
+    capture, capture_by_type = capture_counts(runs, events, leads)
+    day_of = lambda ev: ev["time"].astimezone(KST).strftime("%Y-%m-%d")  # noqa: E731
+    rated = lambda c: {k: {**v, "rate": _rate(v["captured"], v["events"])} for k, v in c.items()}  # noqa: E731
+    blank_capture = {str(lead): {"events": 0, "captured": 0} for lead in leads}
+
+    by_type: dict[str, Any] = {}
+    for type_id in th.types:
+        mine = [ev for ev in events if ev["type"] == type_id]
+        cells = table.get(type_id)
+        if not mine and cells is None:
+            continue
+        by_type[type_id] = {
+            "name": th.type_name(type_id),
+            "events": len(mine),
+            "event_days": len({day_of(ev) for ev in mine}),
+            "capture": rated(capture_by_type.get(type_id) or blank_capture),
+            "false_alarm": alert_counts(cells or blank_cells, cfg),
+            "calibration": calibration_rows(cells or blank_cells, days.get(type_id)),
+        }
     return {
-        "schema": 1,
+        "schema": 2,
         "updated_at": iso(now),
         "period": {"from": first, "to": end, "replays": len(runs), "step_hours": STEP_HOURS},
         "regions": regions_used,
         "models": list(models),
         "horizon_hours": cfg.settings.horizon_hours,
-        "lead_hours": result.get("lead_hours"),
-        "events": result.get("events"),
-        "event_days": len(event_days),
-        "capture": result.get("capture"),
-        "false_alarm": result.get("false_alarm"),
-        "by_type": {type_id: {**info, "calibration": calibration_rows(table.get(type_id) or [[0, 0] for _ in BUCKETS], days.get(type_id))} for type_id, info in (result.get("by_type") or {}).items()},
+        "lead_hours": leads,
+        "events": len(events),
+        "event_days": len({day_of(ev) for ev in events}),
+        "capture": rated(capture),
+        "false_alarm": alert_counts(total, cfg),
+        "by_type": by_type,
         "calibration": calibration_rows(total, all_days),
-        "types_without_events": sorted(th.type_name(t) for t in table if t not in (result.get("by_type") or {})),
+        "types_without_events": sorted(info["name"] for info in by_type.values() if not info["events"]),
         "notes": [
             "미래를 훔쳐보지 않게, 재현 시점 기준 24시간까지는 하루 전에 예측한 값, 그 뒤는 이틀 전에 예측한 값만 썼습니다(실제 서비스보다 오래된 예보 — 불리한 조건).",
             "기상청 단기예보는 과거분을 받을 수 없어 해외 수치모델만으로 계산했습니다(실제 서비스는 단기예보까지 5개).",
             "공식 예비특보로 등급을 올리는 부분은 넣지 않았습니다 — 계산식 자체의 성능입니다.",
+            "실제 특보 한 건은 '한 지역에 특보가 새로 발효되거나 단계가 올라간 것'입니다(기상청 발표 기록의 발효 시각). '하루 전'은 발효 24~30시간 전의 재현을 봅니다.",
+            "'맞았다'는 표시한 뒤 48시간 안에 그 단계 이상의 특보가 실제로 시작된 경우입니다. 이미 발효 중인 특보는 예측으로 세지 않았습니다.",
             "표본은 서로 독립이 아닙니다(한 번의 비·바람이 여러 지역·여러 시점에 걸칩니다). 특보가 있었던 날 수를 함께 보세요.",
         ],
     }
