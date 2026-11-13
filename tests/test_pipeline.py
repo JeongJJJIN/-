@@ -745,6 +745,24 @@ class RailPageTest(unittest.TestCase):
         worker = (self.WEB / "sw.js").read_text(encoding="utf-8")
         self.assertIn('"home.js?v=__BUILD__"', worker)
 
+    def test_first_screen_map_shows_stations_and_survives_forced_dark(self):
+        """지도에 역 위치·노선을 겹치고, 역 이름으로도 지역을 찾는다. 이름표는 그림 안의 글자가 아니라 보통 글자로 얹는다(브라우저의 강제 다크 모드에서도 읽히게)."""
+        html = (self.WEB / "index.html").read_text(encoding="utf-8")
+        script = (self.WEB / "home.js").read_text(encoding="utf-8")
+        style = (self.WEB / "style.css").read_text(encoding="utf-8")
+        worker = (self.WEB / "sw.js").read_text(encoding="utf-8")
+        for name in ("geo/stations.json", "geo/rail.json"):
+            self.assertIn(name, script)
+            self.assertIn(f'"{name}"', worker)
+        self.assertIn("stationHit", script)  # 역 이름으로 찾기
+        self.assertIn("OpenStreetMap", html)  # 노선·역 위치의 출처 표기(ODbL)
+        self.assertIn("map-overlay", script)
+        self.assertNotIn('s("text"', script)  # 지도 그림 안에 글자를 넣지 않는다
+        self.assertIn('class: "ground"', script)  # 구역 사이의 틈으로 페이지 바탕이 비치지 않게
+        for page in ("index.html", "full.html", "rail.html", "analysis.html"):
+            self.assertIn('<meta name="color-scheme" content="light dark">', (self.WEB / page).read_text(encoding="utf-8"), page)
+        self.assertIn("color-scheme: light dark", style)
+
     def test_older_pages_are_kept_but_not_linked_from_the_first_screen(self):
         import re
 
