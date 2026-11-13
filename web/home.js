@@ -117,6 +117,8 @@
         h("p", { class: "headline" }, h("span", { class: active ? "big word" : "big" }, active ? "발효 중" : sum.p == null ? "–" : String(sum.p), !active && sum.p != null ? h("small", null, "%") : null), active ? null : gradePill(sum.g)),
         active ? (sum.official_from ? h("p", { class: "when", text: `${rangeText(sum.official_from)} 발효` }) : null)
           : sum.from ? h("p", { class: "when", text: `${rangeText(sum.from, sum.to)} 기준 도달 예상` }) : null);
+      // 호우: 주변 지역의 예보까지 보고 올린 가능성이면 그렇게 적는다(teukbo/area.py)
+      if (!active && sum.area != null) card.append(h("p", { class: "basis", text: sum.near ? `주변 지역(${sum.near})의 큰비 예보까지 반영한 값입니다.` : "이 지역과 주변의 큰비 예보를 반영한 값입니다." }));
     }
     const now = nowLine(region);
     if (now) card.append(now);
