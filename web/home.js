@@ -5,6 +5,7 @@
  *  live.json          몇 분마다 확인한 공식 특보·예비특보(있으면 덮어 쓴다: 발효 중이면 '발효 중', 예비특보면 '높음' 이상)
  *  geo/zones.json     특보구역 경계(지도)
  *  geo/rail.json · geo/stations.json  철도 노선과 역 위치(지도에 겹쳐 그린다. 역 이름으로도 지역을 찾는다). 없어도 화면은 동작한다
+ *  data/detail/<지역>.json  그 지역의 시간별 예보 값(모델별) — 고른 지역의 '앞으로 48시간 날씨'를 적는 데 쓴다. 없으면 그 칸을 뺀다
  *  data/backtest.json 과거 검증 — 지난 예보로 가능성을 다시 계산해 실제 특보와 맞춰 본 결과(teukbo.backtest). 없으면 그 구역을 숨긴다
  * 화면의 상태는 둘뿐이다: 지역을 고르지 않았으면 전국 지도와 전국 요약, 골랐으면 그 지역의 가능성과 그 주변 지도.
  * 원칙: 받아 온 글은 늘 텍스트로 넣는다. 공식 특보가 있으면 가능성보다 먼저 보여 준다.
@@ -17,11 +18,15 @@
   const RANK = { unknown: -1, low: 0, caution: 1, high: 2, active: 3 };
   const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"];
   const RELOAD_MS = 10 * 60 * 1000, STORE_KEY = "teukbo.region", MAX_MATCHES = 8, MAX_OTHERS = 4, MAX_NOTABLE = 4, MAX_STATIONS = 12;
-  const MAX_OTHER_STATION_NAMES = 8, ZONE_FONT = 12, STATION_FONT = 11;  // 지도 위 이름표의 글자 크기(px) — style.css 의 .map-label · .map-station-name 과 같게
+  const MAX_OTHER_STATION_NAMES = 8, ZONE_FONT = 12, STATION_FONT = 11;
+  const ZOOM_MIN_W = 5, LABEL_MAX_W = 120, ZOOM_STEP = 1.6;  // 가장 가까이 볼 때의 너비(지도 단위), 이름표·역을 적는 가장 넓은 범위, ＋/－ 한 번의 배율
+  const RAIN_MODEL_MM = 1.0, RAIN_START_MM = 0.3, SNOW_MIN_CM = 1.0;  // 날씨 요약: 48시간 합계가 이만큼이면 '비 예상'으로, 3시간 합계가 이만큼 되면 '시작'으로 본다  // 지도 위 이름표의 글자 크기(px) — style.css 의 .map-label · .map-station-name 과 같게
   const NEAR_COUNT = 16, NEAR_MIN = 12, NEAR_MAX = 42;  // 고른 지역 둘레를 얼마나 넓게 보여 줄지(이웃 지역 수 기준, 지도 단위 ≈ 1.7km)
   const MIN_PROOF_CASES = 30, MIN_PROOF_DAYS = 3;  // 과거 검증 값을 가능성 옆에 적으려면: 표본 30회 이상, 특보가 있었던 날 3일 이상
   const state = { base: null, latest: null, live: null, zones: null, proof: null, region: null, query: "", paths: new Map(), centers: new Map(), labels: new Map(), svg: null, overlay: null, wideBox: null, liveTimer: null,
-    rail: [], stations: [], stationsOf: new Map() };  // stations: [{name, x, y, region}], stationsOf: 지역 id → 그 지역의 역 이름들
+    rail: [], stations: [], stationsOf: new Map(),
+    view: null,  // 지도를 직접 확대·이동했을 때의 보는 범위 [x, y, w, h]. null 이면 기본 범위(전국 또는 고른 지역 둘레)
+    details: new Map() };  // `${지역 id}@${계산 시각}` → 시간별 예보(받는 중이면 "loading", 못 받았으면 null)  // stations: [{name, x, y, region}], stationsOf: 지역 id → 그 지역의 역 이름들
 
   const put = (node, ...kids) => { node.append(...kids.flat(Infinity).filter((kid) => kid != null && kid !== false)); return node; };
   const plain = (text) => String(text || "").replace(/[\s()·.]/g, "").toLowerCase();
@@ -76,6 +81,7 @@
   /** 지역을 고른다(null 이면 전국으로 돌아간다). */
   function pick(id, fromMap) {
     state.region = regionOf(id) ? id : null;
+    state.view = null;  // 지역을 고르거나 전국으로 돌아가면 지도도 기본 범위로
     try { if (state.region) localStorage.setItem(STORE_KEY, state.region); else localStorage.removeItem(STORE_KEY); } catch (_) { /* 저장소를 못 써도 화면은 동작한다 */ }
     state.query = ""; $("q").value = "";
     render();
@@ -128,6 +134,8 @@
     const evidence = top && top.sum.g !== "active" ? proofLine(top.hazard, top.sum.p) : null;
     if (evidence) card.append(h("p", { class: "evidence", text: evidence }));
     card.append(h("p", { class: "basis", text: `앞으로 ${state.latest.horizon_hours}시간${models ? ` · 예보 ${models}개 비교` : ""} · 참고값` }));
+    const weather = renderWeather(region);
+    if (weather) card.append(weather);
     const here = state.stationsOf.get(region.id) || [];
     if (here.length) card.append(h("p", { class: "stations-line" }, h("span", { class: "map-station key", "aria-hidden": "true" }), `이 지역의 역: ${here.slice(0, MAX_STATIONS).join(", ")}${here.length > MAX_STATIONS ? ` 외 ${here.length - MAX_STATIONS}곳` : ""}`));
     return card;
@@ -157,6 +165,89 @@
   function renderResult() {
     const region = regionOf(state.region);
     clear($("result")).append(region ? renderRegion(region) : renderNation());
+  }
+
+
+  // ------------------------------------------------------------ 날씨(앞으로 48시간)
+
+  /** 고른 지역의 시간별 예보를 받아 둔다. 처음이면 받기 시작하고, 받으면 화면을 다시 그린다. */
+  function detailOf(region) {
+    const key = `${region.id}@${state.base.generated_at}`;
+    if (state.details.has(key)) return state.details.get(key);
+    state.details.set(key, "loading");
+    getJson(`data/detail/${encodeURIComponent(region.id)}.json`).then((doc) => doc, () => null).then((doc) => {
+      state.details.set(key, doc && Array.isArray(doc.times) && doc.series ? doc : null);
+      if (state.region === region.id) renderResult();
+    });
+    return "loading";
+  }
+
+  const median = (values) => { const v = values.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; };
+  /** '오늘 18시' '내일 06시' — 한국 시각 기준 */
+  function whenText(iso) {
+    const day = (t) => Math.floor((new Date(t).getTime() + 9 * 3600 * 1000) / 86400000);
+    const diff = day(iso) - day(Date.now()), t = dayHour(iso);
+    return `${diff === 0 ? "오늘" : diff === 1 ? "내일" : diff === 2 ? "모레" : t.day} ${t.hour}`;
+  }
+
+  /** 시간별 예보(모델별) → 날씨 요약. 값은 모델들의 중간값이고, 비·눈은 몇 개 모델이 예상하는지도 센다.
+   *  rain_3h 는 '그 시각까지 3시간 동안 내린 양'이라, 3시간 간격으로 집으면 겹치지 않는 시간대별 강수량이 된다. */
+  function weatherOf(doc) {
+    const times = doc.times, series = doc.series || {}, n = times.length;
+    const models = (key) => Object.values(series[key] || {}).filter((row) => Array.isArray(row) && row.some((v) => v != null));
+    const mid = (key) => { const rows = models(key); return rows.length ? times.map((_, i) => median(rows.map((row) => row[i]))) : null; };
+    const peak = (row, sign) => { let best = null; (row || []).forEach((v, i) => { if (i > 0 && v != null && (best == null || sign * v > sign * row[best])) best = i; }); return best == null ? null : { v: row[best], t: times[best] }; };
+    const out = { blocks: [], rain: null, snow: null, tempMin: null, tempMax: null, wind: null, gust: null };
+
+    const rainRows = models("i:rain_3h");
+    if (rainRows.length) {
+      for (let i = 3; i < n; i += 3) out.blocks.push({ from: times[i - 3], to: times[i], mm: median(rainRows.map((row) => row[i])) });
+      const totals = rainRows.map((row) => { let sum = 0; for (let i = 3; i < n; i += 3) sum += row[i] || 0; return sum; });
+      const wet = rainRows.map((row, k) => (totals[k] >= RAIN_MODEL_MM ? row.findIndex((v, i) => i > 0 && v != null && v >= RAIN_START_MM) : -1)).filter((i) => i > 0).sort((a, b) => a - b);
+      out.rain = { models: rainRows.length, wet: wet.length, start: wet.length ? times[wet[Math.floor((wet.length - 1) / 2)]] : null, min: Math.min(...totals), max: Math.max(...totals) };
+    }
+    const snowRows = models("i:snow_24h"), snowMax = snowRows.map((row) => Math.max(0, ...row.slice(1).filter((v) => v != null)));
+    if (snowRows.length) out.snow = { models: snowRows.length, wet: snowMax.filter((v) => v >= SNOW_MIN_CM).length, max: Math.max(0, ...snowMax) };
+    const temp = mid("v:temp"), wind = mid("i:wind"), gust = mid("i:gust");
+    out.tempMin = peak(temp, -1); out.tempMax = peak(temp, 1); out.wind = peak(wind, 1); out.gust = peak(gust, 1);
+    return out;
+  }
+
+  const mm = (v) => (v < 1 ? (v < 0.05 ? "0" : v.toFixed(1)) : String(Math.round(v)));
+
+  function renderWeather(region) {
+    const doc = detailOf(region);
+    if (!doc) return null;
+    const box = h("div", { class: "weather" }, h("p", { class: "weather-title" }, "날씨", h("small", null, ` 앞으로 ${state.latest.horizon_hours}시간 · 예보들의 중간값`)));
+    if (doc === "loading") return put(box, h("p", { class: "basis", text: "불러오는 중…" }));
+    const w = weatherOf(doc), lines = [];
+    if (w.rain) {
+      const r = w.rain, amount = r.max < 0.5 ? "" : ` · ${state.latest.horizon_hours}시간 ${mm(r.min) === mm(r.max) ? `${mm(r.max)}mm` : `${mm(r.min)}~${mm(r.max)}mm`}`;
+      const text = !r.wet ? "비 소식 없음" : r.wet * 2 >= r.models ? `${whenText(r.start)} 무렵부터${amount}` : `올 수도 있음${amount}`;
+      lines.push(h("li", null, h("span", { class: "name", text: "비" }), h("b", { text }), r.wet ? h("small", null, `예보 ${r.models}개 중 ${r.wet}개가 비 예상`) : null));
+    }
+    if (w.snow && w.snow.wet) lines.push(h("li", null, h("span", { class: "name", text: "눈" }), h("b", { text: `최대 ${mm(w.snow.max)}cm` }), h("small", null, `예보 ${w.snow.models}개 중 ${w.snow.wet}개가 눈 예상(24시간 신적설)`)));
+    if (w.tempMin && w.tempMax) lines.push(h("li", null, h("span", { class: "name", text: "기온" }), h("b", { text: `${Math.round(w.tempMin.v)}~${Math.round(w.tempMax.v)}℃` }), h("small", null, `최저 ${whenText(w.tempMin.t)} · 최고 ${whenText(w.tempMax.t)}`)));
+    if (w.wind) lines.push(h("li", null, h("span", { class: "name", text: "바람" }), h("b", { text: `최대 ${Math.round(w.wind.v)}m/s` }), h("small", null, `${whenText(w.wind.t)}${w.gust ? ` · 순간 ${Math.round(w.gust.v)}m/s` : ""}`)));
+    if (!lines.length) return null;
+    box.append(h("ul", { class: "weather-lines" }, lines));
+
+    // 시간대별 강수량(3시간씩) — 언제 오는지 한눈에. 막대가 없으면 비가 없는 시간대
+    const wet = w.blocks.filter((b) => b.mm != null && b.mm >= 0.1);
+    if (wet.length) {
+      const top = Math.max(5, ...w.blocks.map((b) => b.mm || 0));
+      box.append(h("div", { class: "rain-strip", role: "img", "aria-label": `시간대별 강수량(3시간씩): ${wet.map((b) => `${whenText(b.from)}부터 ${mm(b.mm)}mm`).join(", ")}` },
+        w.blocks.map((b) => {
+          const t = dayHour(b.from), value = b.mm || 0, first = t.hour === "00시" || b === w.blocks[0];
+          return h("div", { class: "rain-col", title: `${t.day} ${t.hour}부터 3시간: ${mm(value)}mm` },
+            h("span", { class: "rain-value", text: value >= 0.5 ? mm(value) : "" }),
+            h("span", { class: "rain-bar", style: `height:${value >= 0.1 ? Math.max(3, Math.round((value / top) * 44)) : 0}px` }),
+            h("span", { class: "rain-hour", text: t.hour.replace("시", "") }),
+            h("span", { class: "rain-day", text: first ? t.day : "" }));
+        })),
+        h("p", { class: "basis", text: "막대: 3시간 동안의 강수량(mm) · 아래 숫자는 시작 시각" }));
+    }
+    return box;
   }
 
   // ------------------------------------------------------------ 과거 검증
@@ -270,8 +361,12 @@
     state.wideBox = [x0 - pad, y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad];
     svg.append(ground, around, covered, rails);
     state.overlay = h("div", { class: "map-overlay", "aria-hidden": "true" });
-    holder.append(svg, state.overlay);
+    const tools = h("div", { class: "map-zoom" },
+      h("button", { type: "button", "aria-label": "지도 확대", title: "확대", onclick: () => zoomBy(ZOOM_STEP) }, "+"),
+      h("button", { type: "button", "aria-label": "지도 축소", title: "축소", onclick: () => zoomBy(1 / ZOOM_STEP) }, "−"));
+    holder.append(svg, state.overlay, tools);
     state.svg = svg;
+    bindMapGestures(svg);
     put(clear($("legend")), ["low", "caution", "high", "active"].map((grade) => h("li", null, h("span", { class: `swatch map-key g-${grade}` }), GRADE[grade])),
       state.stations.length ? h("li", null, h("span", { class: "map-station key" }), "역") : null);
   }
@@ -284,7 +379,7 @@
     if (!layer || !state.svg) return;
     clear(layer);
     const picked = state.centers.has(state.region) ? state.region : null;
-    if (!picked) return;
+    if (currentBox()[2] > LABEL_MAX_W) return;  // 넓게 볼 때는 적지 않는다
     const ctm = state.svg.getScreenCTM(), host = layer.getBoundingClientRect();
     if (!ctm || !host.width) return;
     const at = ([x, y]) => [ctm.a * x + ctm.e - host.left, ctm.d * y + ctm.f - host.top];
@@ -296,7 +391,8 @@
     const mark = (cls, text, x, y) => h("span", { class: cls, style: `left:${x.toFixed(1)}px;top:${y.toFixed(1)}px`, text });
     const dots = [], stationNames = [], zoneNames = [];  // 쌓는 순서: 역의 점 → 역 이름 → 지역 이름(맨 위)
 
-    const [px, py] = at(state.centers.get(picked));
+    const focus = picked ? at(state.centers.get(picked)) : null;
+    const [px, py] = focus && inside(focus, 0) ? focus : [host.width / 2, host.height / 2];  // 가까운 것부터 적는 기준점: 고른 지역(화면 밖이면 화면 가운데)
     const near = (a, b) => Math.hypot(a[0] - px, a[1] - py) - Math.hypot(b[0] - px, b[1] - py);
     const zoneMarks = [...state.centers].map(([id, c]) => ({ id, text: state.labels.get(id), xy: at(c) })).filter((m) => m.text && (m.id === picked || inside(m.xy, 4))).sort((a, b) => near(a.xy, b.xy));
     const stops = state.stations.map((st) => ({ st, mine: st.region === picked, xy: at([st.x, st.y]) })).filter((m) => inside(m.xy, 2)).sort((a, b) => near(a.xy, b.xy));
@@ -339,12 +435,84 @@
     return [cx - half, cy - half, 2 * half, 2 * half];
   }
 
+  const defaultBox = () => (state.centers.has(state.region) ? nearBox(state.region) : state.wideBox);
+  const currentBox = () => state.view || defaultBox();
+
+  /** 보는 범위만 바꾼다(확대·이동할 때마다 불린다). 넓게 보면 이름표·역을 숨기고 선을 가늘게 한다. */
+  function applyView() {
+    if (!state.svg) return;
+    const box = currentBox();
+    state.svg.setAttribute("viewBox", box.map((v) => v.toFixed(2)).join(" "));
+    state.svg.setAttribute("class", `${box[2] > LABEL_MAX_W ? "wide" : "near"}${state.view ? " zoomed" : ""}`);
+    $("back").hidden = !state.view && !state.centers.has(state.region);
+    // 이름표·역의 자리는 화면을 한 번 그릴 때 한 번만 다시 잡는다(손가락으로 확대·이동하는 동안 버벅이지 않게)
+    if (!state.overlayFrame) state.overlayFrame = requestAnimationFrame(() => { state.overlayFrame = 0; layoutOverlay(); });
+  }
+
+  /** 보는 범위를 정한다: 너무 가까이·너무 멀리 가지 않게, 지도 밖으로 벗어나지 않게. */
+  function setView(box) {
+    const wide = state.wideBox, ratio = box[3] / box[2];
+    const w = Math.max(ZOOM_MIN_W, Math.min(box[2], Math.max(wide[2], wide[3] / ratio))), hgt = w * ratio;
+    const cx = Math.max(wide[0], Math.min(wide[0] + wide[2], box[0] + box[2] / 2)), cy = Math.max(wide[1], Math.min(wide[1] + wide[3], box[1] + box[3] / 2));
+    state.view = [cx - w / 2, cy - hgt / 2, w, hgt];
+    applyView();
+  }
+
+  /** 배율만큼 확대(1보다 크면)·축소한다. 화면의 한 점(손가락·마우스 위치)을 주면 그 점이 제자리에 있게. */
+  function zoomBy(factor, clientX, clientY) {
+    if (!state.svg) return;
+    const rect = state.svg.getBoundingClientRect(), [x, y, w, hgt] = currentBox();
+    const fx = clientX == null ? 0.5 : (clientX - rect.left) / rect.width, fy = clientY == null ? 0.5 : (clientY - rect.top) / rect.height;
+    setView([x + (w - w / factor) * fx, y + (hgt - hgt / factor) * fy, w / factor, hgt / factor]);
+  }
+
+  /** 지도 손짓: 두 손가락으로 벌리고 오므려 확대·축소(함께 움직이면 이동), 확대한 뒤에는 한 손가락으로 끌어 이동.
+   *  확대하기 전의 한 손가락은 페이지를 넘기는 데 쓰게 둔다(지도가 화면을 꽉 채워도 아래로 내려갈 수 있게). 마우스는 끌어서 이동, Ctrl+휠로 확대. */
+  function bindMapGestures(svg) {
+    const pointers = new Map();
+    let start = null, moved = 0;
+    const begin = () => { start = { box: [...currentBox()], pts: [...pointers.values()].map((p) => ({ ...p })) }; };
+    svg.addEventListener("pointerdown", (event) => {
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pointers.size === 1) moved = 0;
+      begin();
+    });
+    window.addEventListener("pointermove", (event) => {
+      if (!pointers.has(event.pointerId) || !start) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const rect = svg.getBoundingClientRect(), scale = start.box[2] / rect.width, pts = [...pointers.values()];
+      if (pts.length === 1 && start.pts.length === 1) {
+        if (event.pointerType === "touch" && !state.view) return;  // 확대 전의 한 손가락은 페이지 넘기기
+        const dx = pts[0].x - start.pts[0].x, dy = pts[0].y - start.pts[0].y;
+        moved = Math.max(moved, Math.hypot(dx, dy));
+        if (moved > 4) setView([start.box[0] - dx * scale, start.box[1] - dy * scale, start.box[2], start.box[3]]);
+      } else if (pts.length >= 2 && start.pts.length >= 2) {
+        moved = 99;
+        const d0 = Math.hypot(start.pts[0].x - start.pts[1].x, start.pts[0].y - start.pts[1].y) || 1, d1 = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+        const w = start.box[2] / (d1 / d0), hgt = start.box[3] / (d1 / d0), s2 = w / rect.width;
+        const mx0 = (start.pts[0].x + start.pts[1].x) / 2, my0 = (start.pts[0].y + start.pts[1].y) / 2, mx1 = (pts[0].x + pts[1].x) / 2, my1 = (pts[0].y + pts[1].y) / 2;
+        // 처음 두 손가락 가운데가 가리키던 지점이 지금 가운데 아래에 오도록
+        const gx = start.box[0] + (mx0 - rect.left) * scale, gy = start.box[1] + (my0 - rect.top) * scale;
+        setView([gx - (mx1 - rect.left) * s2, gy - (my1 - rect.top) * s2, w, hgt]);
+      }
+    });
+    const end = (event) => { if (pointers.delete(event.pointerId)) begin(); };
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    // 두 손가락 손짓과 확대한 뒤의 끌기는 브라우저가 페이지를 움직이는 데 쓰지 않게 한다
+    svg.addEventListener("touchmove", (event) => { if (event.touches.length >= 2 || state.view) event.preventDefault(); }, { passive: false });
+    svg.addEventListener("wheel", (event) => {  // 그냥 휠은 페이지를 넘기는 데 쓰게 두고, Ctrl+휠(트랙패드 오므리기 포함)일 때만 확대
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      zoomBy(event.deltaY < 0 ? 1.25 : 0.8, event.clientX, event.clientY);
+    }, { passive: false });
+    svg.addEventListener("click", (event) => { if (moved > 6) { event.stopPropagation(); event.preventDefault(); } }, true);  // 끌어서 옮긴 것은 누른 것으로 치지 않는다
+    svg.addEventListener("keydown", (event) => { if (event.key === "+" || event.key === "=") zoomBy(ZOOM_STEP); else if (event.key === "-") zoomBy(1 / ZOOM_STEP); });
+  }
+
   function paintMap() {
     if (!state.svg) return;
     const picked = state.centers.has(state.region) ? state.region : null;
-    const box = picked ? nearBox(picked) : state.wideBox;
-    state.svg.setAttribute("viewBox", box.map((v) => v.toFixed(1)).join(" "));
-    state.svg.setAttribute("class", picked ? "near" : "wide");
     for (const [id, paths] of state.paths) {
       const region = regionOf(id), top = region && region.top, grade = top ? top.grade : "low", isPicked = id === picked;
       const label = region ? `${fullName(region)}: ${top && RANK[top.grade] > 0 ? topText(top) : "가능성 낮음"}` : id;
@@ -352,11 +520,10 @@
         path.setAttribute("class", `zone g-${grade}${isPicked ? " picked" : ""}`);
         path.setAttribute("aria-label", label);
         path.setAttribute("aria-pressed", String(isPicked));
-        if (isPicked) path.parentNode.append(path);  // 고른 지역의 테두리가 이웃에 가리지 않게 맨 위로
+        if (isPicked && path.parentNode.lastChild !== path) path.parentNode.append(path);  // 고른 지역의 테두리가 이웃에 가리지 않게 맨 위로
       }
     }
-    $("back").hidden = !picked;
-    layoutOverlay();
+    applyView();
   }
 
   // ------------------------------------------------------------ 머리말 · 전체

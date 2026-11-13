@@ -803,7 +803,11 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
 .map-head .legend { margin: 0; }
 .map-head .chip { flex: none; white-space: nowrap; }
 .home-map #map { position: relative; margin-top: 4px; }
-.home-map svg { display: block; width: 100%; height: auto; max-height: 62vh; }
+.home-map svg { display: block; width: 100%; height: auto; max-height: 62vh; touch-action: pan-y; cursor: grab; -webkit-user-select: none; user-select: none; }
+.home-map svg.zoomed { touch-action: none; }
+.map-zoom { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; }
+.map-zoom button { width: 40px; height: 40px; padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; font-size: 22px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18); }
+.map-zoom button:active { background: var(--plane); }
 .home-map .ground { fill: var(--surface); }
 /* 선 굵기는 확대해도 화면에서 같은 굵기로 */
 .home-map path { vector-effect: non-scaling-stroke; }
@@ -831,6 +835,19 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
 .map-station.key { width: 8px; height: 8px; margin: 0 7px 0 3px; background: var(--ink); }
 .map-station-name { padding: 0 3px; border-radius: 3px; background: var(--label-bg); color: var(--ink-2); font-size: 11px; }
 .map-station-name.mine { color: var(--ink); font-weight: 600; }
+.weather { margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--hair); }
+.weather-title { margin: 0; font-size: 14px; font-weight: 700; }
+.weather-title small { color: var(--ink-3); font-size: 12.5px; font-weight: 400; }
+.weather-lines { margin: 6px 0 0; padding: 0; list-style: none; }
+.weather-lines li { display: grid; grid-template-columns: 3em minmax(0, 1fr); gap: 0 8px; padding: 4px 0; font-size: 15px; }
+.weather-lines .name { color: var(--ink-2); }
+.weather-lines small { grid-column: 2; color: var(--ink-3); font-size: 12.5px; }
+.rain-strip { display: flex; align-items: flex-end; gap: 2px; margin: 8px 0 0; padding-bottom: 30px; border-bottom: 0; }
+.rain-col { position: relative; display: flex; flex: 1 1 0; flex-direction: column; align-items: center; justify-content: flex-end; min-width: 0; height: 62px; border-bottom: 1px solid var(--axis); }
+.rain-value { color: var(--ink-2); font-size: 10.5px; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.rain-bar { width: 100%; max-width: 16px; border-radius: 4px 4px 0 0; background: var(--series-1); }
+.rain-hour { position: absolute; top: 100%; margin-top: 2px; color: var(--ink-3); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.rain-day { position: absolute; top: 100%; left: 0; margin-top: 15px; color: var(--ink-2); font-size: 10.5px; white-space: nowrap; }
 .result .stations-line { margin: 8px 0 0; color: var(--ink-2); font-size: 13.5px; }
 .finder .chip small { color: var(--ink-2); font-weight: 400; }
 .result .tally { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; font-size: 17px; }

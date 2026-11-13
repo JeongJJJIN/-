@@ -763,6 +763,19 @@ class RailPageTest(unittest.TestCase):
             self.assertIn('<meta name="color-scheme" content="light dark">', (self.WEB / page).read_text(encoding="utf-8"), page)
         self.assertIn("color-scheme: light dark", style)
 
+    def test_first_screen_map_zooms_and_region_shows_weather(self):
+        """지도는 ＋/－ 단추·두 손가락·끌기로 확대·이동하고, 지역을 고르면 그 지역의 시간별 예보로 '앞으로 48시간 날씨'를 적는다."""
+        script = (self.WEB / "home.js").read_text(encoding="utf-8")
+        style = (self.WEB / "style.css").read_text(encoding="utf-8")
+        for word in ("zoomBy", "bindMapGestures", '"지도 확대"', '"지도 축소"', "touchmove"):
+            self.assertIn(word, script, word)
+        self.assertIn("touch-action: pan-y", style)  # 확대하기 전의 한 손가락은 페이지를 넘기는 데 쓴다
+        self.assertIn("data/detail/", script)
+        self.assertIn("i:rain_3h", script)
+        # 날씨 요약이 읽는 값(3시간 강수량·신적설·풍속·순간풍속·기온)은 지역별 상세 파일의 series 에 들어 있다 — test_detail_structure 가 확인한다
+        for key in ("i:rain_3h", "i:snow_24h", "i:wind", "i:gust", "v:temp"):
+            self.assertIn(f'"{key}"', script, key)
+
     def test_older_pages_are_kept_but_not_linked_from_the_first_screen(self):
         import re
 
