@@ -161,7 +161,13 @@
 
   // ------------------------------------------------------------ 과거 검증
 
-  const pctText = (rate) => (rate == null ? "–" : `${Math.round(rate * 100)}%`);
+  /** 몇 번 가운데 몇 번인지를 %로. 0번이 아닌데 0%로, 전부가 아닌데 100%로 적지 않는다. */
+  function share(hits, total) {
+    if (!total) return "–";
+    if (!hits) return "0%";
+    const p = (hits / total) * 100;
+    return p < 0.1 ? "0.1% 미만" : p < 1 ? `${p.toFixed(1)}%` : p > 99 && hits < total ? "99%" : `${Math.round(p)}%`;
+  }
   const rowFor = (rows, p) => (rows || []).find((row) => p >= row.from && p <= row.to) || null;
   const solid = (row) => Boolean(row && row.cases >= MIN_PROOF_CASES && row.event_days >= MIN_PROOF_DAYS);
 
@@ -173,7 +179,7 @@
     const row = solid(own) ? own : solid(all) ? all : null;
     if (!row) return null;
     const scope = row === own ? `${(proof.by_type[hazard.type] || {}).name || ""} 특보` : "특보";
-    return `과거 검증: 가능성이 ${row.from === row.to ? `${row.from}%` : `${row.from}~${row.to}%`}였던 ${row.cases.toLocaleString("ko-KR")}번 가운데 ${row.hits.toLocaleString("ko-KR")}번(${pctText(row.rate)})이 48시간 안에 실제 ${scope}로 이어졌습니다.`;
+    return `과거 검증: 가능성이 ${row.from === row.to ? `${row.from}%` : `${row.from}~${row.to}%`}였던 ${row.cases.toLocaleString("ko-KR")}번 가운데 ${row.hits.toLocaleString("ko-KR")}번(${share(row.hits, row.cases)})이 48시간 안에 실제 ${scope}로 이어졌습니다.`;
   }
 
   function renderProof() {
@@ -183,19 +189,19 @@
     const day = (iso) => { const t = new Date(new Date(iso).getTime() + 9 * 3600 * 1000); return `${t.getUTCMonth() + 1}월 ${t.getUTCDate()}일`; };
     const count = (n) => Number(n || 0).toLocaleString("ko-KR");
     const lead = (proof.capture || {})["24"] || {}, alerts = (proof.false_alarm || {}).caution_or_higher || {}, high = (proof.false_alarm || {}).high || {};
-    const kept = (a) => (a.alerts ? (a.alerts - a.false) / a.alerts : null);
+    const right = (a) => (a.alerts || 0) - (a.false || 0);
     const tile = (label, value, sub) => h("div", { class: "tile" }, h("p", { class: "label", text: label }), h("p", { class: value === "–" ? "value pending" : "value", text: value }), h("p", { class: "sub", text: sub }));
     put(box,
       h("p", { class: "proof-lede", text: `${day(proof.period.from)} ~ ${day(proof.period.to)}, 전국 ${count(proof.regions)}곳을 6시간마다 그때의 예보로 다시 계산해(${count(proof.period.replays)}회) 기상청의 실제 특보 기록과 맞춰 본 결과입니다. 실제 특보 ${count(proof.events)}건 · 특보가 시작된 날 ${count(proof.event_days)}일.` }),
       h("div", { class: "tiles proof-tiles" },
-        tile("하루 전에 잡아낸 비율", pctText(lead.rate), lead.events ? `실제 특보 ${count(lead.events)}건 중 ${count(lead.captured)}건이 24시간 전 ‘주의’ 이상` : "해당 사례 없음"),
-        tile("‘주의’ 이상이 맞은 비율", pctText(kept(alerts)), alerts.alerts ? `${count(alerts.alerts)}번 표시 중 ${count(alerts.alerts - alerts.false)}번이 48시간 안에 실제 특보` : "해당 사례 없음"),
-        tile("‘높음’이 맞은 비율", pctText(kept(high)), high.alerts ? `${count(high.alerts)}번 표시 중 ${count(high.alerts - high.false)}번이 실제 특보` : "해당 사례 없음")));
+        tile("하루 전에 잡아낸 비율", share(lead.captured, lead.events), lead.events ? `실제 특보 ${count(lead.events)}건 중 ${count(lead.captured)}건이 24시간 전 ‘주의’ 이상` : "해당 사례 없음"),
+        tile("‘주의’ 이상이 맞은 비율", share(right(alerts), alerts.alerts), alerts.alerts ? `${count(alerts.alerts)}번 표시 중 ${count(right(alerts))}번이 48시간 안에 실제 특보` : "해당 사례 없음"),
+        tile("‘높음’이 맞은 비율", share(right(high), high.alerts), high.alerts ? `${count(high.alerts)}번 표시 중 ${count(right(high))}번이 실제 특보` : "해당 사례 없음")));
     const rows = (proof.calibration || []).filter((row) => row.cases);
     if (rows.length) {
       box.append(h("div", { class: "table-scroll" }, h("table", { class: "fit proof-table" },
         h("thead", null, h("tr", null, h("th", { scope: "col", text: "표시한 가능성" }), h("th", { scope: "col", text: "횟수" }), h("th", { scope: "col" }, "실제 특보로 이어짐", h("small", null, "48시간 안")))),
-        h("tbody", null, rows.map((row) => h("tr", null, h("th", { scope: "row", text: row.bucket }), h("td", { text: count(row.cases) }), h("td", null, pctText(row.rate), h("small", null, `${count(row.hits)}번 · 특보일 ${row.event_days}일`))))))));
+        h("tbody", null, rows.map((row) => h("tr", null, h("th", { scope: "row", text: row.bucket }), h("td", { text: count(row.cases) }), h("td", null, share(row.hits, row.cases), h("small", null, `${count(row.hits)}번 · 특보일 ${row.event_days}일`))))))));
     }
     const types = Object.values(proof.by_type || {}).filter((info) => info.events).sort((a, b) => b.events - a.events);
     if (types.length) {
@@ -203,9 +209,13 @@
         h("thead", null, h("tr", null, h("th", { scope: "col", text: "특보 종류" }), h("th", { scope: "col", text: "실제 특보" }), h("th", { scope: "col" }, "하루 전 포착", h("small", null, "‘주의’ 이상")), h("th", { scope: "col" }, "‘주의’ 이상이 맞음"))),
         h("tbody", null, types.map((info) => {
           const c = (info.capture || {})["24"] || {}, a = (info.false_alarm || {}).caution_or_higher || {};
-          return h("tr", null, h("th", { scope: "row", text: info.name }), h("td", { text: `${count(info.events)}건` }),
-            h("td", null, pctText(c.rate), h("small", null, c.events ? `${count(c.captured)}/${count(c.events)}` : "–")),
-            h("td", null, pctText(kept(a)), h("small", null, a.alerts ? `${count(a.alerts - a.false)}/${count(a.alerts)}` : "표시 없음")));
+          // 표본이 적으면(30 미만) %를 적지 않고 횟수만 적는다 — 몇 건 안 되는 비율은 믿을 숫자가 아니다
+          const cell = (hits, total, none) => (!total ? h("td", null, "–", h("small", null, none))
+            : total < MIN_PROOF_CASES ? h("td", null, `${count(hits)}/${count(total)}`, h("small", null, "표본 적음"))
+              : h("td", null, share(hits, total), h("small", null, `${count(hits)}/${count(total)}`)));
+          return h("tr", null, h("th", { scope: "row", text: info.name }),
+            h("td", null, `${count(info.events)}건`, info.event_days != null ? h("small", null, `특보일 ${info.event_days}일`) : null),
+            cell(c.captured, c.events, "해당 없음"), cell(right(a), a.alerts, "표시 없음"));
         })))));
     }
     put(box, h("details", { class: "proof-notes" }, h("summary", { text: "어떻게 검증했나 · 한계" }),
