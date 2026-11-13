@@ -759,9 +759,21 @@ class RailPageTest(unittest.TestCase):
         self.assertIn("map-overlay", script)
         self.assertNotIn('s("text"', script)  # 지도 그림 안에 글자를 넣지 않는다
         self.assertIn('class: "ground"', script)  # 구역 사이의 틈으로 페이지 바탕이 비치지 않게
-        for page in ("index.html", "full.html", "rail.html", "analysis.html"):
+        for page in ("full.html", "rail.html", "analysis.html"):
             self.assertIn('<meta name="color-scheme" content="light dark">', (self.WEB / page).read_text(encoding="utf-8"), page)
+        self.assertIn('<meta name="color-scheme" content="dark">', html)  # 첫 화면은 늘 짙은 하늘색 바탕에 흰 글씨다
         self.assertIn("color-scheme: light dark", style)
+
+    def test_first_screen_looks_like_a_weather_app(self):
+        """첫 화면은 하늘빛 바탕(낮·밤·비) 위에 큰 글씨와 반투명 카드로 그린다. 가능성이 '주의' 이상이면 바탕 위쪽에 그 색이 번진다."""
+        script = (self.WEB / "home.js").read_text(encoding="utf-8")
+        style = (self.WEB / "style.css").read_text(encoding="utf-8")
+        for word in ("paintSky", "dataset.sky", "dataset.grade", "hourStrip", "nowLine"):
+            self.assertIn(word, script, word)
+        for rule in ('body.home[data-sky="night"]', 'body.home[data-sky="rain"]', 'body.home[data-grade="caution"]', 'body.home[data-grade="high"]', 'body.home[data-grade="active"]', "body.home .glass"):
+            self.assertIn(rule, style, rule)
+        for word in ("맑음", "흐림"):  # 하늘 상태는 받는 자료에 없으므로 화면에 적지 않는다
+            self.assertNotIn(word, script, word)
 
     def test_first_screen_map_zooms_and_region_shows_weather(self):
         """지도는 ＋/－ 단추·두 손가락·끌기로 확대·이동하고, 지역을 고르면 그 지역의 시간별 예보로 '앞으로 48시간 날씨'를 적는다."""

@@ -876,3 +876,142 @@ table.fit.proof-table tbody th { text-align: left; white-space: nowrap; }
 .proof-notes ul { margin: 8px 0 0; padding-left: 18px; }
 .proof-notes li { margin: 0 0 4px; }
 @media (max-width: 480px) { .proof-tiles { grid-template-columns: 1fr; } .proof-tiles .tile .label { min-height: 0; } }
+
+/* ================================================================
+   첫 화면(body.home): 날씨 앱처럼 — 하늘빛 바탕 위에 흰 글씨와 반투명 카드.
+   밝은/어두운 화면 설정과 상관없이 같은 모습이다(바탕이 늘 짙은 하늘색이라 글씨는 늘 흰색).
+   바탕색은 흰 글씨가 또렷하게(명암비 4.5:1 이상) 읽히는 짙기로 골랐다.
+   ================================================================ */
+body.home {
+  color-scheme: dark;
+  --plane: transparent;
+  --surface: rgba(8, 22, 46, 0.3);
+  --ink: #ffffff;
+  --ink-2: rgba(255, 255, 255, 0.86);
+  --ink-3: rgba(255, 255, 255, 0.74);
+  --hair: rgba(255, 255, 255, 0.18);
+  --axis: rgba(255, 255, 255, 0.34);
+  --border: rgba(255, 255, 255, 0.2);
+  --link: #ffffff;
+  --label-bg: rgba(6, 18, 38, 0.68);
+  --m-low: rgba(255, 255, 255, 0.3);
+  --m-caution: #f4c84a;
+  --m-high: #f39a4e;
+  --m-active: #e04848;
+  --m-around: transparent;
+  --series-1: #a9d8ff;
+  --g-low-wash: rgba(255, 255, 255, 0.12);
+  --sky: linear-gradient(180deg, #2a6bb8 0%, #2c7aa6 34%, #27798a 62%, #285fa6 100%);
+  --glow: transparent;
+  background: #285fa6;
+  color: var(--ink);
+}
+body.home[data-sky="night"] { --sky: linear-gradient(180deg, #101c3c 0%, #1a2a56 40%, #20315f 68%, #111b38 100%); background: #111b38; }
+body.home[data-sky="rain"] { --sky: linear-gradient(180deg, #3b4c66 0%, #3d566c 38%, #36566a 64%, #2d4360 100%); background: #2d4360; }
+body.home[data-grade="caution"] { --glow: rgba(176, 118, 8, 0.6); }
+body.home[data-grade="high"] { --glow: rgba(186, 82, 20, 0.66); }
+body.home[data-grade="active"] { --glow: rgba(168, 30, 30, 0.72); }
+/* 바탕은 화면에 고정해 두고 내용만 넘어간다. 가능성이 '주의' 이상이면 위쪽에 그 색이 번진다 */
+body.home::before { content: ""; position: fixed; inset: 0; z-index: -2; background: var(--sky); }
+body.home::after { content: ""; position: fixed; inset: 0 0 auto 0; height: 62vh; z-index: -1; background: radial-gradient(120% 100% at 50% 0%, var(--glow) 0%, transparent 72%); pointer-events: none; }
+
+body.home .notice { border: 0; background: rgba(4, 14, 30, 0.42); color: #fff; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+body.home .masthead { padding: 14px 0 6px; }
+body.home .masthead h1 { font-size: 16px; font-weight: 600; letter-spacing: 0; }
+body.home .updated { color: var(--ink-3); font-size: 12.5px; }
+body.home a { color: #fff; }
+body.home :focus-visible { outline-color: #fff; }
+
+/* 찾기: 둥근 반투명 칸 */
+body.home .finder { display: block; margin-top: 2px; }
+body.home .finder-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+body.home .finder-input { min-height: 50px; padding: 8px 18px 8px 46px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 999px; background: rgba(255, 255, 255, 0.16) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.500'/%3E%3Cpath d='m20 20-4.200-4.200'/%3E%3C/svg%3E") 16px 50% / 20px 20px no-repeat; color: #fff; }
+body.home .finder-input::placeholder { color: rgba(255, 255, 255, 0.74); }
+body.home .finder-input:focus-visible { outline: 3px solid #fff; outline-offset: 1px; }
+body.home .finder-matches { margin-top: 8px; }
+body.home .finder-none { color: var(--ink-2); }
+body.home .chip { border-color: rgba(255, 255, 255, 0.32); background: rgba(255, 255, 255, 0.16); color: #fff; }
+body.home .chip[aria-pressed="true"] { border-color: #fff; background: #fff; color: #12305a; }
+body.home .finder .chip small { color: inherit; opacity: 0.8; }
+
+/* 가능성: 카드 없이 하늘 위에 크게 */
+body.home .card.result { margin-top: 18px; padding: 6px 4px 2px; overflow: visible; border: 0; border-radius: 0; background: none; box-shadow: none; }
+body.home .result .where { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 15px; }
+body.home .result .where b { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+body.home .result .where small { margin-left: 4px; font-size: 14px; }
+body.home .pin { flex: none; width: 24px; height: 24px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linejoin: round; }
+body.home .result .hz { margin-top: 16px; color: var(--ink-2); font-size: 16px; font-weight: 600; }
+body.home .result .headline { gap: 14px; margin-top: 2px; }
+body.home .result .big { font-size: 92px; font-weight: 300; line-height: 1.04; letter-spacing: -0.04em; }
+body.home .result .big.word { font-size: 64px; font-weight: 400; }
+body.home .result .big small { margin-left: 2px; font-size: 34px; font-weight: 400; }
+body.home .result .headline .pill { font-size: 16px; padding: 3px 14px; }
+body.home .result .when { margin-top: 8px; font-size: 18px; font-weight: 600; line-height: 1.4; }
+body.home .result .nowline { margin: 12px 0 0; color: var(--ink-2); font-size: 17px; }
+body.home .result .nowline p { margin: 0 0 2px; }
+body.home .result .rainline { display: flex; align-items: center; gap: 6px; color: #fff; font-weight: 600; }
+body.home .result .rainline .wx-icon { width: 18px; height: 18px; }
+body.home .result .basis { color: var(--ink-3); }
+body.home .result .official-lines, body.home .result .others { margin-top: 16px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); }
+body.home .result .evidence { margin-top: 14px; padding: 10px 14px; border-radius: 16px; }
+body.home .result .stations-line { color: var(--ink-2); }
+body.home .result .tally { margin-top: 14px; font-size: 18px; }
+body.home .result .tally b { font-size: 34px; font-weight: 400; }
+body.home .pill.g-low, body.home .pill.g-unknown { border-color: rgba(255, 255, 255, 0.36); background: rgba(255, 255, 255, 0.18); color: #fff; }
+body.home .pill.g-caution { border-color: #f4c84a; background: #f4c84a; color: #1c1500; }
+body.home .pill.g-high { border-color: #f39a4e; background: #f39a4e; color: #1f0e00; }
+body.home .pill.g-active { border-color: #d43c3c; background: #d43c3c; color: #fff; }
+body.home .pill.g-pre { border: 1px dashed #fff; background: transparent; color: #fff; }
+
+/* 반투명 카드 */
+body.home .glass, body.home .home-map, body.home .proof { margin-top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 22px; background: var(--surface); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+body.home .glass-title { margin: 0; font-size: 15px; font-weight: 700; }
+body.home .glass-title small { color: var(--ink-3); font-size: 12.5px; font-weight: 400; }
+
+/* 날씨 카드 */
+body.home .weather { border-top: 1px solid var(--border); }
+body.home .weather-lines { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--hair); }
+body.home .weather-lines li { padding: 6px 0; font-size: 16px; }
+.strip { margin: 10px -16px 0; padding: 0 16px 4px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.strip::-webkit-scrollbar { display: none; }
+.strip-inner { position: relative; display: flex; }
+.strip-col { display: grid; flex: none; grid-template-rows: 16px 20px 28px 16px 52px; justify-items: center; align-items: center; width: 56px; }
+.strip-day { color: var(--ink-2); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.strip-hour { color: var(--ink-2); font-size: 13px; font-variant-numeric: tabular-nums; }
+.strip-icon { display: flex; align-items: center; justify-content: center; height: 28px; }
+.wx-icon { width: 22px; height: 22px; }
+.wx-icon.rain path { fill: var(--series-1); stroke: var(--series-1); stroke-width: 1.6; stroke-linejoin: round; }
+.wx-icon.rain.l1 path { fill-opacity: 0.12; }
+.wx-icon.rain.l2 path { fill-opacity: 0.55; }
+.strip-mm { color: var(--series-1); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.strip-temp { position: relative; width: 100%; height: 52px; }
+.strip-deg { position: absolute; left: 0; right: 0; text-align: center; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.strip-dot { position: absolute; left: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #fff; }
+.strip-line { position: absolute; left: 0; bottom: 0; overflow: visible; pointer-events: none; }
+.strip-line polyline { fill: none; stroke: rgba(255, 255, 255, 0.7); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 지도 카드 */
+body.home .home-map #map { margin-top: 8px; overflow: hidden; border-radius: 16px; }
+body.home .home-map .ground { fill: rgba(6, 18, 38, 0.3); }
+body.home .home-map .zone { stroke: rgba(6, 18, 38, 0.5); }
+body.home .home-map .zone.picked { stroke: #fff; }
+body.home .home-map .rails path { stroke: #fff; opacity: 0.5; }
+body.home .home-map .wide .rails path { opacity: 0.32; }
+body.home .map-label.picked { background: #fff; color: #10294d; box-shadow: none; }
+body.home .map-station { background: #fff; box-shadow: 0 0 0 1px rgba(6, 18, 38, 0.7); }
+body.home .map-station.mine { box-shadow: 0 0 0 2px rgba(6, 18, 38, 0.8); }
+body.home .map-station.key { background: #fff; }
+body.home .map-station-name { color: rgba(255, 255, 255, 0.9); }
+body.home .map-zoom button { border-color: rgba(255, 255, 255, 0.34); background: rgba(6, 18, 38, 0.62); color: #fff; box-shadow: none; }
+body.home .map-zoom button:active { background: rgba(6, 18, 38, 0.85); }
+body.home .swatch { border-color: rgba(255, 255, 255, 0.4); }
+
+/* 과거 검증 카드 */
+body.home .proof { border-top: 1px solid var(--border); }
+body.home .proof h2 { font-size: 17px; }
+body.home .tile { border-color: var(--border); background: rgba(255, 255, 255, 0.1); }
+body.home .tile .label, body.home .tile .sub { color: var(--ink-2); }
+body.home .banner { border-color: rgba(255, 255, 255, 0.26); background: rgba(120, 78, 0, 0.6); color: #fff; }
+body.home .foot { border-top-color: var(--hair); color: var(--ink-3); }
+body.home .linklike { color: #fff; }
+
