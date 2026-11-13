@@ -59,6 +59,7 @@ def main() -> int:
         for lead, ms in sorted(got[regions[0].id].items()):
             have = ", ".join(f"{name}({sum(v is not None for v in ms.values[name])})" for name in sorted(ms.values))
             print(f"  정상  {model.id} {lead}일 전 예측: {iso(ms.times[0])} ~ {iso(ms.times[-1])} ({len(ms.times)}시간) · {have}")
+    check_asos(data_go_kr_key, now, opts)
     print()
     # 전국 수집은 지점을 여러 곳씩 묶어 요청한다 — 그 묶음 요청이 되는지 한 번 확인(전국에 고루 퍼진 지점으로)
     fetch = st.raw.get("fetch", {})
@@ -122,6 +123,44 @@ def main() -> int:
 
     print(f"\n예측 자료 {ok_models}개 사용 가능" + ("" if ok_models else " — 계산할 수 없습니다"))
     return 0 if ok_models else 1
+
+
+def check_asos(key, now, opts: dict) -> None:
+    """종관기상관측(ASOS) 시간자료: 활용신청이 되어 있는지, 오래된 날짜도 오는지, 어떤 값이 들어 있는지."""
+    from datetime import datetime
+
+    from .sources import asos
+    from .timeutil import KST
+
+    print("\n[실제 관측 (검증용 · 기상청 ASOS 시간자료)]")
+    if not key:
+        print("  건너뜀: 인증키 없음")
+        return
+    yesterday = (now - timedelta(days=1)).replace(hour=0, minute=0)
+    tries = [("어제", "108", yesterday, yesterday.replace(hour=23)), ("어제", "174", yesterday, yesterday.replace(hour=23)),
+             ("2024-07-10", "108", datetime(2024, 7, 10, 0, tzinfo=KST), datetime(2024, 7, 10, 23, tzinfo=KST)),
+             ("2025-07-17", "174", datetime(2025, 7, 17, 0, tzinfo=KST), datetime(2025, 7, 18, 23, tzinfo=KST)),
+             ("2025-01 한 달", "108", datetime(2025, 1, 1, 0, tzinfo=KST), datetime(2025, 1, 31, 23, tzinfo=KST))]
+    for label, station, start, end in tries:
+        started = time.monotonic()
+        try:
+            rows = asos.fetch_hourly(key, station, start, end, opts)
+        except FetchError as e:
+            print(f"  실패  {label} 지점 {station}: {str(e)[:200]}")
+            continue
+        if not rows:
+            print(f"  자료 없음  {label} 지점 {station}")
+            continue
+        have = {name: sum(1 for r in rows if r[name] is not None) for name in asos.FIELDS.values()}
+        rain = sum(r["precip"] or 0 for r in rows)
+        print(f"  정상  {label} 지점 {station}({rows[0]['name']}): {len(rows)}시간 · 값 있는 시간 수 {have} · 강수 합계 {rain:.1f}mm · {time.monotonic() - started:.1f}초")
+    # 지점 목록(이름)을 한 번에: 지점번호를 주지 않으면 전 지점이 오는지
+    try:
+        rows = asos.fetch_hourly(key, "", yesterday.replace(hour=9), yesterday.replace(hour=9), opts)
+        names = sorted({(r["stn"], r["name"]) for r in rows})
+        print(f"  지점 목록(어제 09시 한 시각, 지점번호 없이 요청): {len(names)}곳 — " + ", ".join(f"{a}{b}" for a, b in names))
+    except FetchError as e:
+        print(f"  지점 목록 요청 실패: {str(e)[:200]}")
 
 
 def check_live(cfg, now, data_go_kr_key, apihub_key, opts: dict) -> None:
