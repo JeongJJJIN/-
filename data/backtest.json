@@ -1,10 +1,10 @@
 {
-  "schema": 1,
-  "updated_at": "2026-11-13T08:38+09:00",
+  "schema": 2,
+  "updated_at": "2026-11-13T09:16+09:00",
   "period": {
     "from": "2026-09-19T15:00+09:00",
-    "to": "2026-11-11T03:00+09:00",
-    "replays": 211,
+    "to": "2026-11-11T09:00+09:00",
+    "replays": 212,
     "step_hours": 6
   },
   "regions": 226,
@@ -19,25 +19,25 @@
     12,
     24
   ],
-  "events": 591,
-  "event_days": 25,
+  "events": 640,
+  "event_days": 23,
   "capture": {
     "12": {
-      "events": 532,
-      "captured": 380,
-      "rate": 0.714
+      "events": 640,
+      "captured": 408,
+      "rate": 0.637
     },
     "24": {
-      "events": 532,
-      "captured": 386,
-      "rate": 0.726
+      "events": 640,
+      "captured": 421,
+      "rate": 0.658
     }
   },
   "false_alarm": {
     "caution_or_higher": {
-      "alerts": 5410,
-      "false": 2666,
-      "rate": 0.493
+      "alerts": 5440,
+      "false": 2665,
+      "rate": 0.49
     },
     "high": {
       "alerts": 726,
@@ -48,24 +48,25 @@
   "by_type": {
     "heavy_rain": {
       "name": "호우",
-      "events": 23,
+      "events": 71,
+      "event_days": 7,
       "capture": {
         "12": {
-          "events": 8,
-          "captured": 3,
-          "rate": 0.375
+          "events": 71,
+          "captured": 10,
+          "rate": 0.141
         },
         "24": {
-          "events": 8,
-          "captured": 3,
-          "rate": 0.375
+          "events": 71,
+          "captured": 15,
+          "rate": 0.211
         }
       },
       "false_alarm": {
         "caution_or_higher": {
           "alerts": 160,
-          "false": 96,
-          "rate": 0.6
+          "false": 76,
+          "rate": 0.475
         },
         "high": {
           "alerts": 25,
@@ -78,7 +79,7 @@
           "bucket": "0%",
           "from": 0,
           "to": 0,
-          "cases": 93294,
+          "cases": 93746,
           "hits": 246,
           "rate": 0.003,
           "event_days": 6
@@ -114,23 +115,24 @@
     },
     "strong_wind": {
       "name": "강풍",
-      "events": 296,
+      "events": 297,
+      "event_days": 20,
       "capture": {
         "12": {
-          "events": 252,
-          "captured": 158,
-          "rate": 0.627
+          "events": 297,
+          "captured": 179,
+          "rate": 0.603
         },
         "24": {
-          "events": 252,
-          "captured": 159,
-          "rate": 0.631
+          "events": 297,
+          "captured": 182,
+          "rate": 0.613
         }
       },
       "false_alarm": {
         "caution_or_higher": {
-          "alerts": 2912,
-          "false": 1566,
+          "alerts": 2938,
+          "false": 1581,
           "rate": 0.538
         },
         "high": {
@@ -144,7 +146,7 @@
           "bucket": "0%",
           "from": 0,
           "to": 0,
-          "cases": 55959,
+          "cases": 56376,
           "hits": 16,
           "rate": 0.0,
           "event_days": 4
@@ -153,7 +155,7 @@
           "bucket": "1~29% (낮음)",
           "from": 1,
           "to": 29,
-          "cases": 35773,
+          "cases": 35807,
           "hits": 940,
           "rate": 0.026,
           "event_days": 16
@@ -162,7 +164,7 @@
           "bucket": "30~59% (주의)",
           "from": 30,
           "to": 59,
-          "cases": 2766,
+          "cases": 2767,
           "hits": 1214,
           "rate": 0.439,
           "event_days": 19
@@ -181,6 +183,7 @@
     "heavy_snow": {
       "name": "대설",
       "events": 1,
+      "event_days": 1,
       "capture": {
         "12": {
           "events": 1,
@@ -210,7 +213,7 @@
           "bucket": "0%",
           "from": 0,
           "to": 0,
-          "cases": 95368,
+          "cases": 95820,
           "hits": 8,
           "rate": 0.0,
           "event_days": 1
@@ -247,6 +250,7 @@
     "cold_wave": {
       "name": "한파",
       "events": 271,
+      "event_days": 4,
       "capture": {
         "12": {
           "events": 271,
@@ -261,9 +265,9 @@
       },
       "false_alarm": {
         "caution_or_higher": {
-          "alerts": 2338,
-          "false": 1004,
-          "rate": 0.429
+          "alerts": 2342,
+          "false": 1008,
+          "rate": 0.43
         },
         "high": {
           "alerts": 530,
@@ -276,7 +280,7 @@
           "bucket": "0%",
           "from": 0,
           "to": 0,
-          "cases": 79867,
+          "cases": 80319,
           "hits": 486,
           "rate": 0.006,
           "event_days": 4
@@ -309,6 +313,140 @@
           "event_days": 2
         }
       ]
+    },
+    "heat_wave": {
+      "name": "폭염",
+      "events": 0,
+      "event_days": 0,
+      "capture": {
+        "12": {
+          "events": 0,
+          "captured": 0,
+          "rate": null
+        },
+        "24": {
+          "events": 0,
+          "captured": 0,
+          "rate": null
+        }
+      },
+      "false_alarm": {
+        "caution_or_higher": {
+          "alerts": 0,
+          "false": 0,
+          "rate": null
+        },
+        "high": {
+          "alerts": 0,
+          "false": 0,
+          "rate": null
+        }
+      },
+      "calibration": [
+        {
+          "bucket": "0%",
+          "from": 0,
+          "to": 0,
+          "cases": 143732,
+          "hits": 0,
+          "rate": 0.0,
+          "event_days": 0
+        },
+        {
+          "bucket": "1~29% (낮음)",
+          "from": 1,
+          "to": 29,
+          "cases": 4,
+          "hits": 0,
+          "rate": 0.0,
+          "event_days": 0
+        },
+        {
+          "bucket": "30~59% (주의)",
+          "from": 30,
+          "to": 59,
+          "cases": 0,
+          "hits": 0,
+          "rate": null,
+          "event_days": 0
+        },
+        {
+          "bucket": "60~100% (높음)",
+          "from": 60,
+          "to": 100,
+          "cases": 0,
+          "hits": 0,
+          "rate": null,
+          "event_days": 0
+        }
+      ]
+    },
+    "tropical_night": {
+      "name": "열대야",
+      "events": 0,
+      "event_days": 0,
+      "capture": {
+        "12": {
+          "events": 0,
+          "captured": 0,
+          "rate": null
+        },
+        "24": {
+          "events": 0,
+          "captured": 0,
+          "rate": null
+        }
+      },
+      "false_alarm": {
+        "caution_or_higher": {
+          "alerts": 0,
+          "false": 0,
+          "rate": null
+        },
+        "high": {
+          "alerts": 0,
+          "false": 0,
+          "rate": null
+        }
+      },
+      "calibration": [
+        {
+          "bucket": "0%",
+          "from": 0,
+          "to": 0,
+          "cases": 47912,
+          "hits": 0,
+          "rate": 0.0,
+          "event_days": 0
+        },
+        {
+          "bucket": "1~29% (낮음)",
+          "from": 1,
+          "to": 29,
+          "cases": 0,
+          "hits": 0,
+          "rate": null,
+          "event_days": 0
+        },
+        {
+          "bucket": "30~59% (주의)",
+          "from": 30,
+          "to": 59,
+          "cases": 0,
+          "hits": 0,
+          "rate": null,
+          "event_days": 0
+        },
+        {
+          "bucket": "60~100% (높음)",
+          "from": 60,
+          "to": 100,
+          "cases": 0,
+          "hits": 0,
+          "rate": null,
+          "event_days": 0
+        }
+      ]
     }
   },
   "calibration": [
@@ -316,7 +454,7 @@
       "bucket": "0%",
       "from": 0,
       "to": 0,
-      "cases": 515228,
+      "cases": 517905,
       "hits": 756,
       "rate": 0.001,
       "event_days": 12
@@ -325,7 +463,7 @@
       "bucket": "1~29% (낮음)",
       "from": 1,
       "to": 29,
-      "cases": 49718,
+      "cases": 49752,
       "hits": 1514,
       "rate": 0.03,
       "event_days": 17
@@ -334,7 +472,7 @@
       "bucket": "30~59% (주의)",
       "from": 30,
       "to": 59,
-      "cases": 4713,
+      "cases": 4714,
       "hits": 2212,
       "rate": 0.469,
       "event_days": 19
@@ -357,6 +495,8 @@
     "미래를 훔쳐보지 않게, 재현 시점 기준 24시간까지는 하루 전에 예측한 값, 그 뒤는 이틀 전에 예측한 값만 썼습니다(실제 서비스보다 오래된 예보 — 불리한 조건).",
     "기상청 단기예보는 과거분을 받을 수 없어 해외 수치모델만으로 계산했습니다(실제 서비스는 단기예보까지 5개).",
     "공식 예비특보로 등급을 올리는 부분은 넣지 않았습니다 — 계산식 자체의 성능입니다.",
+    "실제 특보 한 건은 '한 지역에 특보가 새로 발효되거나 단계가 올라간 것'입니다(기상청 발표 기록의 발효 시각). '하루 전'은 발효 24~30시간 전의 재현을 봅니다.",
+    "'맞았다'는 표시한 뒤 48시간 안에 그 단계 이상의 특보가 실제로 시작된 경우입니다. 이미 발효 중인 특보는 예측으로 세지 않았습니다.",
     "표본은 서로 독립이 아닙니다(한 번의 비·바람이 여러 지역·여러 시점에 걸칩니다). 특보가 있었던 날 수를 함께 보세요."
   ]
 }
