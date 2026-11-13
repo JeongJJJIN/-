@@ -315,14 +315,18 @@
       stationNames.push(mark(m.mine ? "map-station-name mine" : "map-station-name", text, spot[0], spot[1]));
       return true;
     };
-    zoneMarks.filter((m) => m.id === picked).forEach((m) => zoneName(m, true));
-    for (const m of stops) {  // 역의 점 위에는 이름을 적지 않는다
-      taken.push([m.xy[0], m.xy[1], m.mine ? 11 : 7, m.mine ? 11 : 7]);
+    // 자리 잡는 순서: 고른 지역 이름 → 고른 지역의 역(점·이름) → 다른 지역 이름 → 다른 역(점·이름).
+    // 지역 이름은 다른 지역의 역 점 위에 덮어 적는다(수도권처럼 역이 촘촘한 곳에서 지역 이름이 빠지지 않게).
+    const dot = (m) => {
+      taken.push([m.xy[0], m.xy[1], m.mine ? 11 : 7, m.mine ? 11 : 7]);  // 역의 점 위에는 역 이름을 적지 않는다
       dots.push(mark(m.mine ? "map-station mine" : "map-station", "", m.xy[0], m.xy[1]));
-    }
+    };
+    zoneMarks.filter((m) => m.id === picked).forEach((m) => zoneName(m, true));
+    stops.filter((m) => m.mine).forEach(dot);
     stops.filter((m) => m.mine).forEach(stationNameAt);
     zoneMarks.filter((m) => m.id !== picked).forEach((m) => zoneName(m, false));
-    let others = 0;  // 다른 지역의 역 이름은 가까운 몇 곳만(수도권처럼 역이 촘촘한 곳에서 지도를 덮지 않게)
+    stops.filter((m) => !m.mine).forEach(dot);
+    let others = 0;  // 다른 지역의 역 이름은 가까운 몇 곳만
     for (const m of stops) if (!m.mine && others < MAX_OTHER_STATION_NAMES && stationNameAt(m)) others += 1;
     layer.append(...dots, ...stationNames, ...zoneNames);
   }
