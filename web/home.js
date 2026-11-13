@@ -98,6 +98,7 @@
       .sort((a, b) => RANK[b.sum.g] - RANK[a.sum.g] || (b.sum.p || 0) - (a.sum.p || 0));
   }
 
+  const pinIcon = () => s("svg", { class: "pin", viewBox: "0 0 24 24", "aria-hidden": "true" }, s("path", { d: "M12 21.5s7-6.300 7-11.8A7 7 0 0 0 5 9.700c0 5.500 7 11.800 7 11.800Z" }), s("circle", { cx: "12", cy: "9.700", r: "2.600" }));
   const gradePill = (grade) => h("span", { class: `pill g-${grade}`, text: GRADE[grade] || GRADE.unknown });
   const percent = (sum) => (sum.g === "active" ? "발효 중" : sum.p == null ? "–" : `${sum.p}%`);
   const topText = (top) => `${hazardName(top.hazard)} ${top.grade === "active" ? "발효 중" : `${top.p == null ? "" : `${top.p}% `}${GRADE[top.grade]}`}`;
@@ -105,18 +106,20 @@
   function renderRegion(region) {
     const rows = rowsOf(region), top = rows[0], official = region.official || {};
     const card = h("div", { class: `card result g-${top ? top.sum.g : "low"}` });
-    card.append(h("p", { class: "where" }, h("b", null, region.name), region.province ? h("small", null, region.province) : null));
+    card.append(h("p", { class: "where" }, pinIcon(), h("b", null, region.name), region.province ? h("small", null, region.province) : null));
 
     if (!top) {
-      put(card, h("p", { class: "headline" }, h("span", { class: "big" }, "낮음")),
+      put(card, h("p", { class: "hz", text: "특보 가능성" }), h("p", { class: "headline" }, h("span", { class: "big" }, "낮음")),
         h("p", { class: "when", text: `앞으로 ${state.latest.horizon_hours}시간, 모든 특보 종류의 가능성이 0%입니다.` }));
     } else {
       const sum = top.sum, active = sum.g === "active";
-      put(card, h("p", { class: "hz", text: top.hazard.name }),
+      put(card, h("p", { class: "hz", text: active ? top.hazard.name : `${top.hazard.name} 가능성` }),
         h("p", { class: "headline" }, h("span", { class: active ? "big word" : "big" }, active ? "발효 중" : sum.p == null ? "–" : String(sum.p), !active && sum.p != null ? h("small", null, "%") : null), active ? null : gradePill(sum.g)),
         active ? (sum.official_from ? h("p", { class: "when", text: `${rangeText(sum.official_from)} 발효` }) : null)
           : sum.from ? h("p", { class: "when", text: `${rangeText(sum.from, sum.to)} 기준 도달 예상` }) : null);
     }
+    const now = nowLine(region);
+    if (now) card.append(now);
 
     // 공식 특보·예비특보(있으면 가능성보다 이것이 우선이다)
     const lines = [];
@@ -134,11 +137,9 @@
     const evidence = top && top.sum.g !== "active" ? proofLine(top.hazard, top.sum.p) : null;
     if (evidence) card.append(h("p", { class: "evidence", text: evidence }));
     card.append(h("p", { class: "basis", text: `앞으로 ${state.latest.horizon_hours}시간${models ? ` · 예보 ${models}개 비교` : ""} · 참고값` }));
-    const weather = renderWeather(region);
-    if (weather) card.append(weather);
     const here = state.stationsOf.get(region.id) || [];
     if (here.length) card.append(h("p", { class: "stations-line" }, h("span", { class: "map-station key", "aria-hidden": "true" }), `이 지역의 역: ${here.slice(0, MAX_STATIONS).join(", ")}${here.length > MAX_STATIONS ? ` 외 ${here.length - MAX_STATIONS}곳` : ""}`));
-    return card;
+    return [card, renderWeather(region)];
   }
 
   /** 지역을 고르지 않았을 때: 전국에서 지금 눈여겨볼 곳 */
@@ -147,12 +148,12 @@
     for (const r of regions) if (r.top && count[r.top.grade] != null) count[r.top.grade] += 1;
     const worst = count.active ? "active" : count.high ? "high" : count.caution ? "caution" : "low";
     const card = h("div", { class: `card result nation g-${worst}` });
-    card.append(h("p", { class: "where" }, h("b", null, "전국"), h("small", null, `${regions.length}개 지역`)));
+    card.append(h("p", { class: "where" }, pinIcon(), h("b", null, "전국"), h("small", null, `${regions.length}개 지역`)));
     const parts = [["active", "발효 중"], ["high", "높음"], ["caution", "주의"]].filter(([grade]) => count[grade]);
     if (!parts.length) {
-      put(card, h("p", { class: "headline" }, h("span", { class: "big" }, "낮음")), h("p", { class: "when", text: `앞으로 ${state.latest.horizon_hours}시간, 전국 모든 지역의 특보 가능성이 낮습니다.` }));
+      put(card, h("p", { class: "hz", text: "특보 가능성" }), h("p", { class: "headline" }, h("span", { class: "big" }, "낮음")), h("p", { class: "when", text: `앞으로 ${state.latest.horizon_hours}시간, 전국 모든 지역의 특보 가능성이 낮습니다.` }));
     } else {
-      card.append(h("p", { class: "tally" }, parts.map(([grade, label]) => h("span", null, gradePill(grade), h("b", null, ` ${count[grade]}`), "곳"))));
+      put(card, h("p", { class: "hz", text: "특보 가능성이 있는 지역" }), h("p", { class: "tally" }, parts.map(([grade, label]) => h("span", null, gradePill(grade), h("b", null, ` ${count[grade]}`), "곳"))));
       const notable = regions.filter((r) => r.top && RANK[r.top.grade] >= RANK.caution).sort((a, b) => RANK[b.top.grade] - RANK[a.top.grade] || (b.top.p || 0) - (a.top.p || 0));
       put(card, h("ul", { class: "others notable", "aria-label": "눈여겨볼 지역" }, notable.slice(0, MAX_NOTABLE).map((r) => h("li", null,
         h("button", { class: "linklike name", type: "button", onclick: () => pick(r.id) }, fullName(r)), h("b", null, r.top.grade === "active" ? "" : r.top.p == null ? "" : `${r.top.p}%`), h("span", { class: "hz-small", text: `${hazardName(r.top.hazard)}${r.top.grade === "active" ? " 발효 중" : ""}` })))),
@@ -164,7 +165,8 @@
 
   function renderResult() {
     const region = regionOf(state.region);
-    clear($("result")).append(region ? renderRegion(region) : renderNation());
+    put(clear($("result")), region ? renderRegion(region) : renderNation());
+    paintSky();
   }
 
 
@@ -197,11 +199,11 @@
     const models = (key) => Object.values(series[key] || {}).filter((row) => Array.isArray(row) && row.some((v) => v != null));
     const mid = (key) => { const rows = models(key); return rows.length ? times.map((_, i) => median(rows.map((row) => row[i]))) : null; };
     const peak = (row, sign) => { let best = null; (row || []).forEach((v, i) => { if (i > 0 && v != null && (best == null || sign * v > sign * row[best])) best = i; }); return best == null ? null : { v: row[best], t: times[best] }; };
-    const out = { blocks: [], rain: null, snow: null, tempMin: null, tempMax: null, wind: null, gust: null };
+    const out = { blocks: [], rain: null, snow: null, tempMin: null, tempMax: null, wind: null, gust: null, now: null };
 
     const rainRows = models("i:rain_3h");
     if (rainRows.length) {
-      for (let i = 3; i < n; i += 3) out.blocks.push({ from: times[i - 3], to: times[i], mm: median(rainRows.map((row) => row[i])) });
+      for (let i = 3; i < n; i += 3) out.blocks.push({ from: times[i - 3], to: times[i], mm: median(rainRows.map((row) => row[i])), temp: null });
       const totals = rainRows.map((row) => { let sum = 0; for (let i = 3; i < n; i += 3) sum += row[i] || 0; return sum; });
       const wet = rainRows.map((row, k) => (totals[k] >= RAIN_MODEL_MM ? row.findIndex((v, i) => i > 0 && v != null && v >= RAIN_START_MM) : -1)).filter((i) => i > 0).sort((a, b) => a - b);
       out.rain = { models: rainRows.length, wet: wet.length, start: wet.length ? times[wet[Math.floor((wet.length - 1) / 2)]] : null, min: Math.min(...totals), max: Math.max(...totals) };
@@ -210,44 +212,91 @@
     if (snowRows.length) out.snow = { models: snowRows.length, wet: snowMax.filter((v) => v >= SNOW_MIN_CM).length, max: Math.max(0, ...snowMax) };
     const temp = mid("v:temp"), wind = mid("i:wind"), gust = mid("i:gust");
     out.tempMin = peak(temp, -1); out.tempMax = peak(temp, 1); out.wind = peak(wind, 1); out.gust = peak(gust, 1);
+    if (temp) {
+      out.blocks.forEach((b, k) => { b.temp = temp[k * 3]; });  // 그 시간대가 시작할 때의 기온
+      const at = Math.max(0, Math.min(n - 1, Math.round((Date.now() - new Date(times[0]).getTime()) / 3600000)));  // 지금에 가장 가까운 시각
+      if (temp[at] != null) out.now = { v: temp[at], t: times[at] };
+    }
     return out;
   }
 
   const mm = (v) => (v < 1 ? (v < 0.05 ? "0" : v.toFixed(1)) : String(Math.round(v)));
 
+  const rainText = (r, withAmount) => {
+    const amount = !withAmount || r.max < 0.5 ? "" : ` · ${state.latest.horizon_hours}시간 ${mm(r.min) === mm(r.max) ? `${mm(r.max)}mm` : `${mm(r.min)}~${mm(r.max)}mm`}`;
+    return !r.wet ? "비 소식 없음" : r.wet * 2 >= r.models ? `${whenText(r.start)} 무렵부터 비${amount}` : `비가 올 수도 있음${amount}`;
+  };
+  /** 가능성 아래에 적는 날씨 한 줄: '지금 14° · 최고 17° / 최저 13° · 오늘 17시 무렵부터 비' */
+  function nowLine(region) {
+    const doc = detailOf(region);
+    if (!doc || doc === "loading") return null;
+    const w = weatherOf(doc), parts = [];
+    if (w.now) parts.push(`지금 ${Math.round(w.now.v)}°`);
+    if (w.tempMin && w.tempMax) parts.push(`최고 ${Math.round(w.tempMax.v)}° / 최저 ${Math.round(w.tempMin.v)}°`);
+    if (!parts.length && !w.rain) return null;
+    return h("div", { class: "nowline" }, parts.length ? h("p", { text: parts.join(" · ") }) : null,
+      w.rain ? h("p", { class: "rainline" }, w.rain.wet ? dropIcon(3) : null, rainText(w.rain, false)) : null);
+  }
+
+  const dropIcon = (level) => s("svg", { class: `wx-icon rain l${level}`, viewBox: "0 0 24 24", "aria-hidden": "true" }, s("path", { d: "M12 3.2c3.2 4.3 5.3 7.2 5.3 10.2a5.3 5.3 0 0 1-10.6 0c0-3 2.1-5.900 5.3-10.2Z" }));
+  const STRIP_COL = 56, STRIP_CURVE = 52;  // 시간대 한 칸의 너비, 기온 곡선 칸의 높이(px) — style.css 의 .strip-col · .strip-temp 과 같게
+
+  /** 시간대별(3시간씩) 날씨 줄: 시각 · 비(아이콘과 mm) · 기온 곡선. 옆으로 밀어 48시간을 본다.
+   *  하늘 상태(구름의 양)는 받는 자료에 없어 그리지 않는다 — 비가 없는 시간대는 아이콘을 비워 둔다. */
+  function hourStrip(w) {
+    const cols = w.blocks, temps = cols.map((b) => b.temp).filter((v) => v != null);
+    const lo = Math.min(...temps), span = Math.max(2, Math.max(...temps) - lo);
+    const y = (v) => 24 + (1 - (v - lo) / span) * (STRIP_CURVE - 34);  // 곡선 칸 안에서의 높이(위에서부터 px)
+    const points = cols.map((b, k) => (b.temp == null ? null : `${k * STRIP_COL + STRIP_COL / 2},${y(b.temp).toFixed(1)}`)).filter(Boolean).join(" ");
+    let lastDay = "";
+    const columns = cols.map((b) => {
+      const [day, hour] = whenText(b.from).split(" "), value = b.mm || 0, newDay = day !== lastDay;
+      lastDay = day;
+      return h("div", { class: "strip-col", title: `${day} ${hour}부터 3시간: 비 ${mm(value)}mm${b.temp == null ? "" : `, 기온 ${Math.round(b.temp)}℃`}` },
+        h("span", { class: "strip-day", text: newDay ? day : "" }),
+        h("span", { class: "strip-hour", text: hour }),
+        h("span", { class: "strip-icon" }, value >= 0.1 ? dropIcon(value >= 5 ? 3 : value >= 1 ? 2 : 1) : null),
+        h("span", { class: "strip-mm", text: value >= 0.1 ? `${mm(value)}mm` : "" }),
+        h("span", { class: "strip-temp" }, b.temp == null ? null : [h("span", { class: "strip-deg", style: `top:${(y(b.temp) - 22).toFixed(1)}px`, text: `${Math.round(b.temp)}°` }), h("span", { class: "strip-dot", style: `top:${y(b.temp).toFixed(1)}px` })]));
+    });
+    const wet = cols.filter((b) => (b.mm || 0) >= 0.1);
+    const label = `시간대별 날씨(3시간씩). ${wet.length ? `비: ${wet.map((b) => `${whenText(b.from)}부터 ${mm(b.mm)}mm`).join(", ")}` : "비 없음"}. 기온 ${cols.filter((b) => b.temp != null).map((b) => `${whenText(b.from)} ${Math.round(b.temp)}도`).join(", ")}`;
+    return h("div", { class: "strip", role: "img", "aria-label": label, tabindex: "0" },
+      h("div", { class: "strip-inner", style: `width:${cols.length * STRIP_COL}px` },
+        points ? s("svg", { class: "strip-line", width: String(cols.length * STRIP_COL), height: String(STRIP_CURVE), viewBox: `0 0 ${cols.length * STRIP_COL} ${STRIP_CURVE}`, "aria-hidden": "true" }, s("polyline", { points })) : null,
+        columns));
+  }
+
+  /** 날씨 카드: 비·눈·기온·바람 한 줄씩과 시간대별 줄 */
   function renderWeather(region) {
     const doc = detailOf(region);
     if (!doc) return null;
-    const box = h("div", { class: "weather" }, h("p", { class: "weather-title" }, "날씨", h("small", null, ` 앞으로 ${state.latest.horizon_hours}시간 · 예보들의 중간값`)));
+    const box = h("section", { class: "glass weather", "aria-label": "날씨" }, h("p", { class: "glass-title" }, "날씨", h("small", null, ` 앞으로 ${state.latest.horizon_hours}시간 · 예보들의 중간값`)));
     if (doc === "loading") return put(box, h("p", { class: "basis", text: "불러오는 중…" }));
     const w = weatherOf(doc), lines = [];
-    if (w.rain) {
-      const r = w.rain, amount = r.max < 0.5 ? "" : ` · ${state.latest.horizon_hours}시간 ${mm(r.min) === mm(r.max) ? `${mm(r.max)}mm` : `${mm(r.min)}~${mm(r.max)}mm`}`;
-      const text = !r.wet ? "비 소식 없음" : r.wet * 2 >= r.models ? `${whenText(r.start)} 무렵부터${amount}` : `올 수도 있음${amount}`;
-      lines.push(h("li", null, h("span", { class: "name", text: "비" }), h("b", { text }), r.wet ? h("small", null, `예보 ${r.models}개 중 ${r.wet}개가 비 예상`) : null));
-    }
+    if (w.rain) lines.push(h("li", null, h("span", { class: "name", text: "비" }), h("b", { text: rainText(w.rain, true).replace(/ 비( ·|$)/, "$1") }), w.rain.wet ? h("small", null, `예보 ${w.rain.models}개 중 ${w.rain.wet}개가 비 예상`) : null));
     if (w.snow && w.snow.wet) lines.push(h("li", null, h("span", { class: "name", text: "눈" }), h("b", { text: `최대 ${mm(w.snow.max)}cm` }), h("small", null, `예보 ${w.snow.models}개 중 ${w.snow.wet}개가 눈 예상(24시간 신적설)`)));
     if (w.tempMin && w.tempMax) lines.push(h("li", null, h("span", { class: "name", text: "기온" }), h("b", { text: `${Math.round(w.tempMin.v)}~${Math.round(w.tempMax.v)}℃` }), h("small", null, `최저 ${whenText(w.tempMin.t)} · 최고 ${whenText(w.tempMax.t)}`)));
     if (w.wind) lines.push(h("li", null, h("span", { class: "name", text: "바람" }), h("b", { text: `최대 ${Math.round(w.wind.v)}m/s` }), h("small", null, `${whenText(w.wind.t)}${w.gust ? ` · 순간 ${Math.round(w.gust.v)}m/s` : ""}`)));
     if (!lines.length) return null;
+    if (w.blocks.length) box.append(hourStrip(w));
     box.append(h("ul", { class: "weather-lines" }, lines));
-
-    // 시간대별 강수량(3시간씩) — 언제 오는지 한눈에. 막대가 없으면 비가 없는 시간대
-    const wet = w.blocks.filter((b) => b.mm != null && b.mm >= 0.1);
-    if (wet.length) {
-      const top = Math.max(5, ...w.blocks.map((b) => b.mm || 0));
-      box.append(h("div", { class: "rain-strip", role: "img", "aria-label": `시간대별 강수량(3시간씩): ${wet.map((b) => `${whenText(b.from)}부터 ${mm(b.mm)}mm`).join(", ")}` },
-        w.blocks.map((b) => {
-          const t = dayHour(b.from), value = b.mm || 0, first = t.hour === "00시" || b === w.blocks[0];
-          return h("div", { class: "rain-col", title: `${t.day} ${t.hour}부터 3시간: ${mm(value)}mm` },
-            h("span", { class: "rain-value", text: value >= 0.5 ? mm(value) : "" }),
-            h("span", { class: "rain-bar", style: `height:${value >= 0.1 ? Math.max(3, Math.round((value / top) * 44)) : 0}px` }),
-            h("span", { class: "rain-hour", text: t.hour.replace("시", "") }),
-            h("span", { class: "rain-day", text: first ? t.day : "" }));
-        })),
-        h("p", { class: "basis", text: "막대: 3시간 동안의 강수량(mm) · 아래 숫자는 시작 시각" }));
-    }
     return box;
+  }
+
+  /** 바탕 하늘: 낮·밤(한국 시각), 지금 비가 오는 시간대면 비 하늘. 가능성이 '주의' 이상이면 위쪽에 그 색을 얹는다. */
+  function paintSky() {
+    const region = regionOf(state.region), hour = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
+    let sky = hour >= 6 && hour < 19 ? "day" : "night";
+    const doc = region ? state.details.get(`${region.id}@${state.base.generated_at}`) : null;
+    if (doc && doc !== "loading") { const first = weatherOf(doc).blocks[0]; if (first && (first.mm || 0) >= 0.5) sky = "rain"; }
+    let grade = "low";
+    if (region) grade = region.top ? region.top.grade : "low";
+    else for (const r of state.latest.regions) if (r.top && RANK[r.top.grade] > RANK[grade]) grade = r.top.grade;
+    document.body.dataset.sky = sky;
+    document.body.dataset.grade = RANK[grade] > 0 ? grade : "low";
+    const meta = document.querySelector('meta[name="theme-color"]:not([media])');
+    if (meta) meta.setAttribute("content", { day: "#2a6bb8", night: "#101c3c", rain: "#3b4c66" }[sky]);
   }
 
   // ------------------------------------------------------------ 과거 검증
@@ -385,7 +434,7 @@
     const at = ([x, y]) => [ctm.a * x + ctm.e - host.left, ctm.d * y + ctm.f - host.top];
     const inside = ([x, y], margin) => x >= margin && y >= margin && x <= host.width - margin && y <= host.height - margin;
     const widthOf = (text, size) => [...text].reduce((w, ch) => w + (ch.charCodeAt(0) > 0x2e80 ? 1 : 0.62), 0) * size + 8;
-    const taken = [];  // 이미 적은 이름표의 [가운데 x, 가운데 y, 너비, 높이]
+    const taken = [[host.width - 30, 56, 60, 112]];  // 이미 차지한 자리의 [가운데 x, 가운데 y, 너비, 높이] — 처음에는 확대·축소 단추 자리
     const free = (x, y, w, hgt) => x - w / 2 >= 0 && x + w / 2 <= host.width && y - hgt / 2 >= 0 && y + hgt / 2 <= host.height
       && !taken.some((b) => Math.abs(b[0] - x) < (b[2] + w) / 2 && Math.abs(b[1] - y) < (b[3] + hgt) / 2);
     const mark = (cls, text, x, y) => h("span", { class: cls, style: `left:${x.toFixed(1)}px;top:${y.toFixed(1)}px`, text });
