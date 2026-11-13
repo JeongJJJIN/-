@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from . import accuracy, rail, rail_run, storage
+from .area import apply_area_scores
 from .assess import OfficialWarning, RegionOfficial, assess_region
 from .config import ROOT, Config, ModelDef, Region, load_config
 from .http import FetchError, get_json
@@ -235,9 +236,10 @@ def replay_one(issue: datetime) -> tuple[dict[str, Any], dict[str, list[list[int
                 models[model_id] = series
         if not models:
             continue
-        rows = truth.get(region.id, [])
-        ra = assess_region(region, models, official_at(cfg, rows, issue), cfg, issue)
-        assessments.append(ra)
+        assessments.append(assess_region(region, models, official_at(cfg, truth.get(region.id, []), issue), cfg, issue))
+    apply_area_scores(assessments, cfg)  # 실제 서비스와 같게: 호우는 주변 지역의 예보까지 본다
+    for ra in assessments:
+        rows = truth.get(ra.region.id, [])
         for a in ra.hazards:
             if a.hazard.method != "model" or a.probability is None:
                 continue
@@ -424,6 +426,7 @@ def build_document(cfg: Config, runs: Sequence[dict[str, Any]], table: Mapping[s
             "미래를 훔쳐보지 않게, 재현 시점 기준 24시간까지는 하루 전에 예측한 값, 그 뒤는 이틀 전에 예측한 값만 썼습니다(실제 서비스보다 오래된 예보 — 불리한 조건).",
             "기상청 단기예보는 과거분을 받을 수 없어 해외 수치모델만으로 계산했습니다(실제 서비스는 단기예보까지 5개).",
             "공식 예비특보로 등급을 올리는 부분은 넣지 않았습니다 — 계산식 자체의 성능입니다.",
+            "호우주의보는 그 지역만이 아니라 주변 30km 안 지역의 예보까지 봅니다. 이 기준은 바로 이 기간의 자료로 맞춘 것이라, 호우의 포착률·적중률은 새 자료에서는 이보다 낮게 나올 수 있습니다.",
             "실제 특보 한 건은 '한 지역에 특보가 새로 발효되거나 단계가 올라간 것'입니다(기상청 발표 기록의 발효 시각). '하루 전'은 발효 24~30시간 전의 재현을 봅니다.",
             "'맞았다'는 표시한 뒤 48시간 안에 그 단계 이상의 특보가 실제로 시작된 경우입니다. 이미 발효 중인 특보는 예측으로 세지 않았습니다.",
             "표본은 서로 독립이 아닙니다(한 번의 비·바람이 여러 지역·여러 시점에 걸칩니다). 특보가 있었던 날 수를 함께 보세요.",
