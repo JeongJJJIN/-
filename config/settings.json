@@ -74,7 +74,8 @@
       "live_interval_seconds: 실시간 자료(특보·지금 날씨·6시간 예보·선로 강우)를 다시 받는 간격. poll_seconds: 화면이 다시 읽는 간격.",
       "trigger: 공개 사이트 갱신 신호. local_keys.txt 에 GITHUB_TRIGGER_TOKEN 이 있을 때만 쓴다(GitHub 예약 실행이 늦거나 돌지 않을 때 이 컴퓨터가 시계 노릇).",
       "  repository: 신호를 보낼 저장소(소유자/이름). live_every_minutes: 실시간 수집 신호 간격.",
-      "  collect_utc_hours·collect_minute: 수집·계산·배포 신호를 보낼 시각(UTC) — .github/workflows/collect.yml 의 예약과 같게 둔다."
+      "  collect_utc_hours·collect_minute: 수집·계산·배포를 돌릴 정해진 시각(UTC). 이 컴퓨터의 신호, GitHub 예약의 '돌릴 때인지' 판단, 실시간 수집이 밀린 계산을 시작시키는 판단(teukbo/schedule.py)이 모두 이 값을 쓴다.",
+      "  collect_retry_minutes: 그 회차의 수집·계산이 실패했을 때 실시간 수집이 다시 시작시키기까지 두는 간격(분). 짧게 잡으면 해외 예보 무료 한도(하루 10,000회)를 실패한 재시도로 써 버릴 수 있다."
     ],
     "live_interval_seconds": 120,
     "poll_seconds": 60,
@@ -85,7 +86,8 @@
       "live_every_minutes": 5,
       "collect_workflow": "collect.yml",
       "collect_utc_hours": [2, 5, 8, 11, 14, 17, 20, 23],
-      "collect_minute": 25
+      "collect_minute": 25,
+      "collect_retry_minutes": 40
     }
   },
   "kma_forecast": {
