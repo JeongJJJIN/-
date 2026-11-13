@@ -1,7 +1,7 @@
 /* 기상특보 가능성 — 모바일 우선. 색은 역할(토큰)로만 쓰고, 밝은/어두운 값은 여기 한곳에서 바꾼다. */
 
 :root {
-  color-scheme: light;
+  color-scheme: light dark;  /* 어두운 화면도 직접 준비해 두었다고 브라우저에 알린다(브라우저가 밝은 화면을 제멋대로 어둡게 바꾸지 않게) */
   --plane: #f6f6f3;
   --surface: #fcfcfb;
   --ink: #0b0b0b;
@@ -745,6 +745,7 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
    첫 화면: 지역 찾기 → 그 지역의 가능성 → 지도 (이것만)
    ==================================================================== */
 :root {
+  --label-bg: rgba(252, 252, 251, 0.82);
   --m-low: #d6d3c8;
   --m-caution: #f3cf63;
   --m-high: #ee9560;
@@ -753,6 +754,7 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
 }
 @media (prefers-color-scheme: dark) {
   :root {
+    --label-bg: rgba(26, 26, 25, 0.82);
     --m-low: #3a3a37;
     --m-caution: #8f6e12;
     --m-high: #b0561f;
@@ -799,7 +801,10 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
 .home-map { margin-top: 12px; }
 .map-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; min-height: 40px; }
 .map-head .legend { margin: 0; }
-.home-map svg { display: block; width: 100%; height: auto; max-height: 62vh; margin-top: 4px; }
+.map-head .chip { flex: none; white-space: nowrap; }
+.home-map #map { position: relative; margin-top: 4px; }
+.home-map svg { display: block; width: 100%; height: auto; max-height: 62vh; }
+.home-map .ground { fill: var(--surface); }
 /* 선 굵기는 확대해도 화면에서 같은 굵기로 */
 .home-map path { vector-effect: non-scaling-stroke; }
 .home-map .around path { fill: var(--m-around); stroke: var(--axis); stroke-width: 0.6px; opacity: .7; }
@@ -812,9 +817,22 @@ tr.picked-row th, tr.picked-row td { background: var(--g-low-wash); }
 .home-map .zone.picked { stroke: var(--ink); stroke-width: 2.5px; }
 .home-map .zone:focus { outline: none; }
 .home-map .zone:focus-visible { stroke: var(--series-1); stroke-width: 3px; }
-.home-map .labels text { fill: var(--ink); font-size: var(--label, 3px); font-weight: 600; pointer-events: none; paint-order: stroke; stroke: var(--surface); stroke-width: 0.28em; stroke-linejoin: round; }
-.home-map .labels text.picked { font-weight: 800; }
-.home-map .wide .labels text { display: none; }  /* 전국 지도에서는 이름을 적지 않는다(지역이 200곳이 넘는다) */
+.home-map .rails path { fill: none; stroke: var(--ink-2); stroke-width: 1.2px; opacity: .6; pointer-events: none; }
+.home-map .rails path.fast { stroke-width: 1.8px; }
+.home-map .wide .rails path { stroke-width: 0.7px; }
+.home-map .wide .rails path.fast { stroke-width: 1px; }
+/* 지도 위의 이름표·역: 그림(SVG) 안의 글자가 아니라 보통 글자로 얹는다 — 브라우저가 화면을 강제로 어둡게 바꿔도 글자와 바탕이 함께 바뀐다 */
+.map-overlay { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.map-overlay span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; line-height: 1.3; }
+.map-label { padding: 0 4px; border-radius: 4px; background: var(--label-bg); color: var(--ink); font-size: 12px; font-weight: 600; }
+.map-label.picked { background: var(--surface); font-weight: 800; box-shadow: 0 0 0 1.5px var(--ink); }
+.map-station { display: inline-block; flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--ink-2); box-shadow: 0 0 0 1px var(--surface); }
+.map-station.mine { width: 9px; height: 9px; background: var(--ink); box-shadow: 0 0 0 1.5px var(--surface); }
+.map-station.key { width: 8px; height: 8px; margin: 0 7px 0 3px; background: var(--ink); }
+.map-station-name { padding: 0 3px; border-radius: 3px; background: var(--label-bg); color: var(--ink-2); font-size: 11px; }
+.map-station-name.mine { color: var(--ink); font-weight: 600; }
+.result .stations-line { margin: 8px 0 0; color: var(--ink-2); font-size: 13.5px; }
+.finder .chip small { color: var(--ink-2); font-weight: 400; }
 .result .tally { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; font-size: 17px; }
 .result .tally b { font-size: 24px; font-variant-numeric: tabular-nums; }
 .result .tally .pill { font-size: 14px; padding: 1px 10px; vertical-align: 3px; }

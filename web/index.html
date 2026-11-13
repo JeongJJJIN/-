@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>기상특보 가능성</title>
   <meta name="description" content="전국 어느 지역이든 고르면 앞으로 48시간 안에 기상특보가 내려질 가능성을 보여 줍니다. 참고용이며 공식 특보·예비특보가 우선합니다.">
+  <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="manifest.webmanifest">
@@ -32,7 +33,7 @@
 
     <section class="finder" aria-label="지역 찾기">
       <label class="finder-label" for="q">지역</label>
-      <input type="search" id="q" class="finder-input" placeholder="지역 이름 (예: 순천, 파주, 서울)" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+      <input type="search" id="q" class="finder-input" placeholder="지역이나 역 이름 (예: 순천, 파주, 오송역)" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
       <div class="finder-matches" id="matches" role="group" aria-label="찾은 지역"></div>
     </section>
 
@@ -55,7 +56,7 @@
   <footer class="foot">
     <div class="wrap">
       <p>가능성은 여러 예보(기상청 단기예보·ECMWF·GFS·ICON·JMA)가 앞으로 48시간 안에 특보 기준을 넘기는 정도를 점수로 만든 <strong>참고값</strong>입니다. 실제 특보는 <a href="https://www.weather.go.kr/w/special-report/overall.do" rel="noopener">기상청 날씨누리의 공식 특보·예비특보</a>를 확인하세요.</p>
-      <p class="credits">기상자료: 기상청(공공데이터포털·API허브) · <a href="https://open-meteo.com/" rel="noopener">Weather data by Open-Meteo.com</a> (<a href="https://creativecommons.org/licenses/by/4.0/" rel="noopener">CC BY 4.0</a>, 가공하여 사용)</p>
+      <p class="credits">기상자료: 기상청(공공데이터포털·API허브) · <a href="https://open-meteo.com/" rel="noopener">Weather data by Open-Meteo.com</a> (<a href="https://creativecommons.org/licenses/by/4.0/" rel="noopener">CC BY 4.0</a>, 가공하여 사용) · 철도 노선·역 위치: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap 기여자</a></p>
     </div>
   </footer>
 
