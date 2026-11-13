@@ -37,7 +37,7 @@ jobs:
       # 작업용 가지에서 직접 실행하면 호우특보 연구용 과거 예보를 받아 그 가지에 저장한다(운영 자료·사이트는 건드리지 않는다).
       # '지역 수' 칸을 받을 모델 묶음으로 쓴다: 0 = 지금 쓰는 모델, 1 = 더해 볼 모델
       - name: 호우특보 사전 포착 연구 (작업용 가지에서만)
-        if: ${{ github.ref != 'refs/heads/main' }}
+        if: ${{ github.ref != 'refs/heads/main' && inputs.regions != '2' }}
         run: |
           kind="${{ inputs.regions == '1' && 'extra' || 'base' }}"
           python3 tools/rain_study.py --models "$kind" --save "tools/cache/rain_${kind}.json.gz" || echo "::warning::연구 실행이 끝까지 가지 못했습니다"
@@ -52,9 +52,10 @@ jobs:
           done
           exit 1
 
+      # 작업용 가지에서 '지역 수' 2 로 실행하면 전국 과거 검증을 돌려 결과만 본다(저장·배포하지 않는다)
       - name: 과거 예보로 다시 계산해 실제 특보와 대조 (표준 라이브러리만 사용)
-        if: ${{ github.ref == 'refs/heads/main' }}
-        run: python3 -m teukbo.backtest --regions "${{ inputs.regions || '0' }}" --out data/backtest.json
+        if: ${{ github.ref == 'refs/heads/main' || inputs.regions == '2' }}
+        run: python3 -m teukbo.backtest --regions "${{ github.ref == 'refs/heads/main' && (inputs.regions || '0') || '0' }}" --out data/backtest.json
 
       - name: 결과 저장
         if: ${{ github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.save) }}

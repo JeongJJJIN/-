@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from . import accuracy, rail, rail_run, storage
+from .area import apply_area_scores
 from .assess import OfficialWarning, RegionOfficial, assess_region
 from .config import ROOT, Config, ModelDef, Region, load_config
 from .http import FetchError, get_json
@@ -235,9 +236,10 @@ def replay_one(issue: datetime) -> tuple[dict[str, Any], dict[str, list[list[int
                 models[model_id] = series
         if not models:
             continue
-        rows = truth.get(region.id, [])
-        ra = assess_region(region, models, official_at(cfg, rows, issue), cfg, issue)
-        assessments.append(ra)
+        assessments.append(assess_region(region, models, official_at(cfg, truth.get(region.id, []), issue), cfg, issue))
+    apply_area_scores(assessments, cfg)  # 실제 서비스와 같게: 호우는 주변 지역의 예보까지 본다
+    for ra in assessments:
+        rows = truth.get(ra.region.id, [])
         for a in ra.hazards:
             if a.hazard.method != "model" or a.probability is None:
                 continue

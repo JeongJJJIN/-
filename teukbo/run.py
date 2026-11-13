@@ -23,6 +23,7 @@ from typing import Any, Mapping
 from . import accuracy as accuracy_mod
 from . import demo as demo_mod
 from . import storage
+from .area import apply_area_scores
 from .assess import RegionAssessment, RegionOfficial, assess_region
 from .config import ROOT, Config, load_config
 from .http import normalize_service_key
@@ -98,6 +99,7 @@ def assess_all(cfg: Config, now: datetime, forecasts: Forecasts, official: Mappi
         series = {mid: per_region[region.id] for mid, per_region in forecasts.items() if region.id in per_region}
         by_region[region.id] = series
         assessments.append(assess_region(region, series, official.get(region.id, RegionOfficial()), cfg, now))
+    apply_area_scores(assessments, cfg)  # 호우: 주변 지역의 예보까지 본다
     return assessments, by_region
 
 

@@ -95,6 +95,10 @@ def _hazard_summary(a: HazardAssessment) -> dict[str, Any]:
         d["from"], d["to"] = _t(a.window_from), _t(a.window_to)
     if a.peak_time is not None:
         d["peak"], d["peak_model"] = _t(a.peak_time), a.peak_model
+    if a.area_value is not None:  # 주변 지역의 예보까지 본 값으로 올린 가능성
+        d["area"] = a.area_value
+        if a.area_from:
+            d["near"] = a.area_from
     if a.off_season:
         d["off"] = True
     if a.official_status:
@@ -330,7 +334,7 @@ def build_history_run(
 
     regions[지역].x[모델] = [[극값, 선행시간h] 또는 null, …]  ('ind' 순서) — 조용한 지역(모든 특보 가능성 0%, 공식 특보·예비특보 없음)은 생략
     regions[지역].q       = 1: 예측은 있었지만 조용해서 x 를 생략했다는 표시 (전국 226곳을 다 남기면 하루 1MB 넘게 쌓인다)
-    regions[지역].h[특보]  = {p: 가능성, mg: 모델 등급, g: 최종 등급, r: [모델별 도달률…('models' 순서)], w: [시작, 끝]}
+    regions[지역].h[특보]  = {p: 가능성, mg: 모델 등급, g: 최종 등급, r: [모델별 도달률…('models' 순서)], w: [시작, 끝], ar: 주변까지 본 값(있을 때만)}
     regions[지역].a       = 발효 중 특보 [{k: 종류, l: 단계, n: 이름, f: 발효 시각}]
     regions[지역].pre     = 예비특보 [{k, l, n, e: 예상 시점 문구}]
     nat                  = 전국 특보 {a: {특보 이름: [구역 코드…]}, p: {예비특보 종류: [구역 코드…]}} (특보 조회 성공 시에만)
@@ -352,6 +356,8 @@ def build_history_run(
                 entry["r"] = [round(a.per_model[m].reach, 2) if m in a.per_model else None for m in model_ids]
             if a.window_from is not None:
                 entry["w"] = [_t(a.window_from), _t(a.window_to)]
+            if a.area_value is not None:
+                entry["ar"] = a.area_value  # 주변 지역의 예보까지 본 값(이 값으로 가능성을 올렸다)
             h[a.hazard.id] = entry
         quiet = bool(x) and not h and not ra.official.active and not ra.official.preliminary
         rec: dict[str, Any] = {"q": 1, "h": h} if quiet else {"x": x, "h": h}

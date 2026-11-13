@@ -117,6 +117,8 @@ class HazardAssessment:
     official_from: datetime | None  # 공식 특보의 발효 시각 (미래면 '발효 예정')
     rows: list[CriterionRow]
     off_season: bool = False  # 예측 범위 전체가 특보 적용 기간(월) 밖
+    area_value: float | None = None  # 주변 지역의 예보까지 본 값으로 가능성을 올렸을 때 그 값(teukbo.area)
+    area_from: str | None = None  # 그 값이 나온 주변 지역 이름(자기 지역이면 None)
 
 
 @dataclass
