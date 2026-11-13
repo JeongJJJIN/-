@@ -58,9 +58,9 @@ def fetch_precip(regions: Sequence[Region], model_id: str, past_days: int, chunk
     start·end(YYYY-MM-DD)를 주면 그 기간을, 아니면 오늘부터 past_days 일 전까지를 받는다."""
     times: list[datetime] = []
     out: dict[str, dict[int, list[float | None]]] = {}
-    for start in range(0, len(regions), chunk):
-        part = regions[start:start + chunk]
-        if start and pause > 0:
+    for offset in range(0, len(regions), chunk):  # (기간의 첫날 start 와 이름이 겹치지 않게)
+        part = regions[offset:offset + chunk]
+        if offset and pause > 0:
             time.sleep(pause)
         params = backtest.build_params(part, model_id, past_days)
         params["hourly"] = "precipitation_previous_day1,precipitation_previous_day2"
