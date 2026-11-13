@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "updated_at": "2026-11-13T09:16+09:00",
+  "updated_at": "2026-11-13T14:09+09:00",
   "period": {
     "from": "2026-09-19T15:00+09:00",
     "to": "2026-11-11T09:00+09:00",
@@ -24,25 +24,25 @@
   "capture": {
     "12": {
       "events": 640,
-      "captured": 408,
-      "rate": 0.637
+      "captured": 439,
+      "rate": 0.686
     },
     "24": {
       "events": 640,
-      "captured": 421,
-      "rate": 0.658
+      "captured": 448,
+      "rate": 0.7
     }
   },
   "false_alarm": {
     "caution_or_higher": {
-      "alerts": 5440,
-      "false": 2665,
-      "rate": 0.49
+      "alerts": 6971,
+      "false": 3955,
+      "rate": 0.567
     },
     "high": {
-      "alerts": 726,
-      "false": 163,
-      "rate": 0.225
+      "alerts": 1061,
+      "false": 336,
+      "rate": 0.317
     }
   },
   "by_type": {
@@ -53,25 +53,25 @@
       "capture": {
         "12": {
           "events": 71,
-          "captured": 10,
-          "rate": 0.141
+          "captured": 41,
+          "rate": 0.577
         },
         "24": {
           "events": 71,
-          "captured": 15,
-          "rate": 0.211
+          "captured": 42,
+          "rate": 0.592
         }
       },
       "false_alarm": {
         "caution_or_higher": {
-          "alerts": 160,
-          "false": 76,
-          "rate": 0.475
+          "alerts": 1691,
+          "false": 1366,
+          "rate": 0.808
         },
         "high": {
-          "alerts": 25,
-          "false": 11,
-          "rate": 0.44
+          "alerts": 360,
+          "false": 184,
+          "rate": 0.511
         }
       },
       "calibration": [
@@ -79,37 +79,37 @@
           "bucket": "0%",
           "from": 0,
           "to": 0,
-          "cases": 93746,
-          "hits": 246,
-          "rate": 0.003,
+          "cases": 90292,
+          "hits": 114,
+          "rate": 0.001,
           "event_days": 6
         },
         {
           "bucket": "1~29% (낮음)",
           "from": 1,
           "to": 29,
-          "cases": 1862,
-          "hits": 226,
-          "rate": 0.121,
+          "cases": 3785,
+          "hits": 117,
+          "rate": 0.031,
           "event_days": 5
         },
         {
           "bucket": "30~59% (주의)",
           "from": 30,
           "to": 59,
-          "cases": 135,
-          "hits": 70,
-          "rate": 0.519,
-          "event_days": 3
+          "cases": 1331,
+          "hits": 149,
+          "rate": 0.112,
+          "event_days": 6
         },
         {
           "bucket": "60~100% (높음)",
           "from": 60,
           "to": 100,
-          "cases": 25,
-          "hits": 14,
-          "rate": 0.56,
-          "event_days": 1
+          "cases": 360,
+          "hits": 176,
+          "rate": 0.489,
+          "event_days": 3
         }
       ]
     },
@@ -454,8 +454,8 @@
       "bucket": "0%",
       "from": 0,
       "to": 0,
-      "cases": 517905,
-      "hits": 756,
+      "cases": 514451,
+      "hits": 624,
       "rate": 0.001,
       "event_days": 12
     },
@@ -463,28 +463,28 @@
       "bucket": "1~29% (낮음)",
       "from": 1,
       "to": 29,
-      "cases": 49752,
-      "hits": 1514,
-      "rate": 0.03,
+      "cases": 51675,
+      "hits": 1405,
+      "rate": 0.027,
       "event_days": 17
     },
     {
       "bucket": "30~59% (주의)",
       "from": 30,
       "to": 59,
-      "cases": 4714,
-      "hits": 2212,
-      "rate": 0.469,
-      "event_days": 19
+      "cases": 5910,
+      "hits": 2291,
+      "rate": 0.388,
+      "event_days": 20
     },
     {
       "bucket": "60~100% (높음)",
       "from": 60,
       "to": 100,
-      "cases": 726,
-      "hits": 563,
-      "rate": 0.775,
-      "event_days": 11
+      "cases": 1061,
+      "hits": 725,
+      "rate": 0.683,
+      "event_days": 12
     }
   ],
   "types_without_events": [
@@ -495,6 +495,7 @@
     "미래를 훔쳐보지 않게, 재현 시점 기준 24시간까지는 하루 전에 예측한 값, 그 뒤는 이틀 전에 예측한 값만 썼습니다(실제 서비스보다 오래된 예보 — 불리한 조건).",
     "기상청 단기예보는 과거분을 받을 수 없어 해외 수치모델만으로 계산했습니다(실제 서비스는 단기예보까지 5개).",
     "공식 예비특보로 등급을 올리는 부분은 넣지 않았습니다 — 계산식 자체의 성능입니다.",
+    "호우주의보는 그 지역만이 아니라 주변 30km 안 지역의 예보까지 봅니다. 이 기준은 바로 이 기간의 자료로 맞춘 것이라, 호우의 포착률·적중률은 새 자료에서는 이보다 낮게 나올 수 있습니다.",
     "실제 특보 한 건은 '한 지역에 특보가 새로 발효되거나 단계가 올라간 것'입니다(기상청 발표 기록의 발효 시각). '하루 전'은 발효 24~30시간 전의 재현을 봅니다.",
     "'맞았다'는 표시한 뒤 48시간 안에 그 단계 이상의 특보가 실제로 시작된 경우입니다. 이미 발효 중인 특보는 예측으로 세지 않았습니다.",
     "표본은 서로 독립이 아닙니다(한 번의 비·바람이 여러 지역·여러 시점에 걸칩니다). 특보가 있었던 날 수를 함께 보세요."
