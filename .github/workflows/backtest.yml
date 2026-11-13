@@ -27,8 +27,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 작업용 가지에서 직접 실행하면: 2024-07 부터의 과거 강수 예보를 모델·기간별로 나눠 받아 그 가지의 tools/cache 에 저장한다(연구용)
+  rain-archive:
+    name: 과거 강수 예보 받기 (${{ matrix.model }} ${{ matrix.period }})
+    if: ${{ github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        model: [ecmwf_ifs025, ncep_gfs_seamless, dwd_icon_seamless, jma_seamless]
+        period: ["2024-07-01:2024-12-31", "2025-01-01:2025-06-30", "2025-07-01:2025-12-31", "2026-01-01:2026-06-30", "2026-07-01:2026-09-11"]
+    steps:
+      - uses: actions/checkout@v6
+      - name: 받아서 저장
+        run: |
+          period="${{ matrix.period }}"; start="${period%%:*}"; end="${period##*:}"
+          file="tools/cache/rain_${{ matrix.model }}_${start}.json.gz"
+          python3 tools/rain_study.py --models "${{ matrix.model }}" --start "$start" --end "$end" --chunk 25 --pause 35 --fetch-only --save "$file"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "$file"
+          git commit -m "연구용 자료: 과거 강수 예보 ${{ matrix.model }} ${start}"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if git push; then exit 0; fi
+            sleep $((RANDOM % 20 + attempt * 5)); git pull --rebase
+          done
+          exit 1
+
   backtest:
     name: 과거 검증
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:

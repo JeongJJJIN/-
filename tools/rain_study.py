@@ -52,8 +52,10 @@ RADII = (0, 30, 60)
 # ---------------------------------------------------------------- 과거 예보(강수량만)
 
 
-def fetch_precip(regions: Sequence[Region], model_id: str, past_days: int, chunk: int, pause: float) -> tuple[list[datetime], dict[str, dict[int, list[float | None]]]]:
-    """한 모델의 강수량 과거 예보 → (시각들, 지역 id → {1: 하루 전 예측, 2: 이틀 전 예측})."""
+def fetch_precip(regions: Sequence[Region], model_id: str, past_days: int, chunk: int, pause: float,
+                 start: str | None = None, end: str | None = None) -> tuple[list[datetime], dict[str, dict[int, list[float | None]]]]:
+    """한 모델의 강수량 과거 예보 → (시각들, 지역 id → {1: 하루 전 예측, 2: 이틀 전 예측}).
+    start·end(YYYY-MM-DD)를 주면 그 기간을, 아니면 오늘부터 past_days 일 전까지를 받는다."""
     times: list[datetime] = []
     out: dict[str, dict[int, list[float | None]]] = {}
     for start in range(0, len(regions), chunk):
@@ -62,6 +64,10 @@ def fetch_precip(regions: Sequence[Region], model_id: str, past_days: int, chunk
             time.sleep(pause)
         params = backtest.build_params(part, model_id, past_days)
         params["hourly"] = "precipitation_previous_day1,precipitation_previous_day2"
+        if start and end:
+            params.pop("past_days", None)
+            params.pop("forecast_days", None)
+            params.update(start_date=start, end_date=end)
         payload = get_json(backtest.ENDPOINT, params, timeout=60, retries=2, backoff=8, label=f"rain-study:{model_id}")
         if isinstance(payload, dict):
             if payload.get("error"):
@@ -250,6 +256,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--models", default="base", help="받을 모델: base(지금 쓰는 모델) | extra(더해 볼 모델) | 쉼표로 적은 모델 id 들")
     parser.add_argument("--save", type=Path, default=None, help="받은 과거 예보를 저장할 파일(.json.gz)")
     parser.add_argument("--load", default="", help="받지 않고 저장본으로 분석(쉼표로 여러 개)")
+    parser.add_argument("--start", default=None, help="받을 기간의 첫날(YYYY-MM-DD). --end 와 함께 쓴다(없으면 오늘부터 --days 일 전까지)")
+    parser.add_argument("--end", default=None)
+    parser.add_argument("--fetch-only", action="store_true", help="받아서 저장만 하고 분석은 하지 않는다")
     parser.add_argument("--regions", type=int, default=0, help="시험용: 고르게 뽑은 N곳만")
     args = parser.parse_args(argv)
 
@@ -275,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         for model_id in wanted:
             started = time.monotonic()
             try:
-                model_times, data = fetch_precip(regions, model_id, args.days, args.chunk, args.pause)
+                model_times, data = fetch_precip(regions, model_id, args.days, args.chunk, args.pause, args.start, args.end)
             except FetchError as e:
                 note(f"- {model_id}: 받지 못함 — {str(e)[:160]}")
                 continue
@@ -297,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
     if not raw:
         print("과거 예보를 하나도 받지 못했습니다.", file=sys.stderr)
         return 1
+    if args.fetch_only:
+        return 0
     reach = {m: {r: {lead: rolling_reach(series) for lead, series in leads.items()} for r, leads in data.items()} for m, data in raw.items()}
     out.append("")
     have_base = [m for m in base if m in reach]
