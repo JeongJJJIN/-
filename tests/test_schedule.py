@@ -48,6 +48,7 @@ class SlotTest(unittest.TestCase):
         self.assertIn('cron: "25,55 * * * *"', workflow)
         self.assertIn("python3 -m teukbo.schedule", workflow)
         self.assertIn("needs.collect.outputs.ran == 'true'", workflow)  # 건너뛴 회차는 배포도 하지 않는다
+        self.assertIn("ref: ${{ github.ref_name }}", workflow)  # 기다리는 동안 앞의 실행이 커밋한 이력까지 받고 시작한다(옛 커밋에서 시작하면 push 충돌)
 
 
 if __name__ == "__main__":
