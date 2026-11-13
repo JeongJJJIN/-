@@ -1,6 +1,9 @@
 """호우특보 사전 포착 연구 — 과거 예보에서 '무엇이 얼마였을 때 실제 호우특보가 났는가'를 본다(분석 도구, 서비스에는 쓰이지 않는다).
 
-    python3 tools/rain_study.py [--days 62] [--extra kma_seamless,jma_msm,...]
+    python3 tools/rain_study.py --models base --save tools/cache/rain_base.json.gz   # 과거 예보를 받아 저장하고 분석
+    python3 tools/rain_study.py --load tools/cache/rain_base.json.gz,tools/cache/rain_extra.json.gz   # 저장해 둔 것으로 분석만(네트워크 없이)
+
+과거 예보 API 는 한 번에 많이 받으면 연결을 늦추므로(무료 한도), 모델 묶음별로 따로 받아 저장해 두고 분석은 저장본으로 한다.
 
 묻는 것
 1. 실제 호우특보가 나기 하루 전, 예보 모델들은 그 지역에 비를 얼마나 예보하고 있었나(특보 기준 대비 비율).
@@ -19,6 +22,8 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import json
 import math
 import os
 import sys
@@ -39,7 +44,7 @@ from teukbo.timeutil import KST  # noqa: E402
 RAIN = "heavy_rain"
 STEP = 6  # 재현 간격(시간)
 HORIZON = 48
-EXTRA = "kma_seamless,kma_ldps,kma_gdps,jma_msm,ukmo_seamless,gem_seamless,meteofrance_seamless,cma_grapes_global"
+EXTRA = "jma_msm,ukmo_seamless,gem_seamless,meteofrance_seamless,cma_grapes_global,kma_seamless"
 THRESHOLDS = (0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0)
 RADII = (0, 30, 60)
 
@@ -57,7 +62,7 @@ def fetch_precip(regions: Sequence[Region], model_id: str, past_days: int, chunk
             time.sleep(pause)
         params = backtest.build_params(part, model_id, past_days)
         params["hourly"] = "precipitation_previous_day1,precipitation_previous_day2"
-        payload = get_json(backtest.ENDPOINT, params, timeout=90, retries=3, backoff=5, label=f"rain-study:{model_id}")
+        payload = get_json(backtest.ENDPOINT, params, timeout=60, retries=2, backoff=8, label=f"rain-study:{model_id}")
         if isinstance(payload, dict):
             if payload.get("error"):
                 raise FetchError(f"{model_id}: {payload.get('reason')}")
@@ -210,13 +215,41 @@ def study(regions: Sequence[Region], times: Sequence[datetime], reach: dict[str,
     _ = replay_index
 
 
+def save_cache(path: Path, times: Sequence[datetime], raw: dict[str, dict[str, dict[int, list[float | None]]]]) -> None:
+    doc = {"first": times[0].isoformat(), "hours": len(times),
+           "models": {m: {r: {str(lead): [None if v is None else round(v, 1) for v in series] for lead, series in leads.items()} for r, leads in data.items()} for m, data in raw.items()}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(path, "wt", encoding="utf-8", compresslevel=9) as f:
+        json.dump(doc, f, separators=(",", ":"))
+
+
+def load_cache(paths: Sequence[Path]) -> tuple[list[datetime], dict[str, dict[str, dict[int, list[float | None]]]]]:
+    """저장본 여럿을 합친다. 시각 범위가 다르면 겹치는 구간만 쓴다."""
+    docs = []
+    for path in paths:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            docs.append(json.load(f))
+    firsts = [datetime.fromisoformat(d["first"]) for d in docs]
+    lo = max(firsts)
+    hi = min(first + timedelta(hours=d["hours"]) for first, d in zip(firsts, docs))
+    times = [lo + timedelta(hours=i) for i in range(int((hi - lo).total_seconds() // 3600))]
+    raw: dict[str, dict[str, dict[int, list[float | None]]]] = {}
+    for first, d in zip(firsts, docs):
+        skip = int((lo - first).total_seconds() // 3600)
+        for m, data in d["models"].items():
+            raw[m] = {r: {int(lead): series[skip:skip + len(times)] for lead, series in leads.items()} for r, leads in data.items()}
+    return times, raw
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="호우특보 사전 포착 연구")
     parser.add_argument("--data-dir", type=Path, default=ROOT / "data")
     parser.add_argument("--days", type=int, default=62)
     parser.add_argument("--chunk", type=int, default=50)
-    parser.add_argument("--pause", type=float, default=6.0)
-    parser.add_argument("--extra", default=EXTRA, help="더해 볼 모델(쉼표로). 받을 수 없는 모델은 건너뛴다")
+    parser.add_argument("--pause", type=float, default=8.0)
+    parser.add_argument("--models", default="base", help="받을 모델: base(지금 쓰는 모델) | extra(더해 볼 모델) | 쉼표로 적은 모델 id 들")
+    parser.add_argument("--save", type=Path, default=None, help="받은 과거 예보를 저장할 파일(.json.gz)")
+    parser.add_argument("--load", default="", help="받지 않고 저장본으로 분석(쉼표로 여러 개)")
     parser.add_argument("--regions", type=int, default=0, help="시험용: 고르게 뽑은 N곳만")
     args = parser.parse_args(argv)
 
@@ -225,45 +258,56 @@ def main(argv: list[str] | None = None) -> int:
     raw_events = rail_run.load_events(args.data_dir)
     truth = backtest.region_intervals(cfg, rail.build_intervals(raw_events))
     events = [ev for ev in backtest.truth_events(cfg, truth) if ev["type"] == RAIN and ev["region"] in {r.id for r in regions}]
-
     base = [m.id for m in cfg.settings.models if m.source == "open_meteo"]
-    extra = [m for m in (x.strip() for x in args.extra.split(",")) if m and m not in base]
     out: list[str] = ["## 호우특보 사전 포착 연구", ""]
+
+    def note(line: str) -> None:
+        out.append(line)
+        print(line, file=sys.stderr, flush=True)
+
     times: list[datetime] = []
-    reach: dict[str, dict[str, dict[int, list[float]]]] = {}
-    for model_id in base + extra:
-        try:
-            if model_id in extra:  # 받을 수 있는 모델인지 한 곳으로 먼저 확인
-                fetch_precip(regions[:1], model_id, 5, 1, 0)
-                time.sleep(2)
-            model_times, data = fetch_precip(regions, model_id, args.days, args.chunk, args.pause)
-        except FetchError as e:
-            out.append(f"- {model_id}: 받지 못함 — {str(e)[:160]}")
-            print(out[-1], file=sys.stderr, flush=True)
-            continue
-        if not data:
-            out.append(f"- {model_id}: 자료 없음")
-            continue
-        if not times:
-            times = model_times
-        if model_times != times:
-            out.append(f"- {model_id}: 시각이 다른 모델과 달라 뺌")
-            continue
-        reach[model_id] = {r: {lead: rolling_reach(series) for lead, series in leads.items()} for r, leads in data.items()}
-        filled = sum(1 for leads in data.values() for series in leads.values() for v in series if v is not None)
-        out.append(f"- {model_id}: {len(data)}곳, 값 {filled:,}개")
-        print(out[-1], file=sys.stderr, flush=True)
-        time.sleep(args.pause)
-    if not reach:
+    raw: dict[str, dict[str, dict[int, list[float | None]]]] = {}
+    if args.load:
+        times, raw = load_cache([Path(p) for p in args.load.split(",") if p])
+        note(f"- 저장본: {', '.join(f'{m}({len(d)}곳)' for m, d in raw.items())} · {times[0]:%m-%d %H시} ~ {times[-1]:%m-%d %H시}")
+    else:
+        wanted = base if args.models == "base" else [x for x in EXTRA.split(",") if x not in base] if args.models == "extra" else [x.strip() for x in args.models.split(",") if x.strip()]
+        for model_id in wanted:
+            started = time.monotonic()
+            try:
+                model_times, data = fetch_precip(regions, model_id, args.days, args.chunk, args.pause)
+            except FetchError as e:
+                note(f"- {model_id}: 받지 못함 — {str(e)[:160]}")
+                continue
+            if not data:
+                note(f"- {model_id}: 자료 없음(이 모델은 과거 예보가 제공되지 않는 듯)")
+                continue
+            if not times:
+                times = model_times
+            if model_times != times:
+                note(f"- {model_id}: 시각이 다른 모델과 달라 뺌")
+                continue
+            raw[model_id] = data
+            filled = sum(1 for leads in data.values() for series in leads.values() for v in series if v is not None)
+            note(f"- {model_id}: {len(data)}곳, 값 {filled:,}개, {time.monotonic() - started:.0f}초")
+            time.sleep(args.pause)
+        if raw and args.save:
+            save_cache(args.save, times, raw)
+            note(f"- 저장: {args.save} ({args.save.stat().st_size / 1024:.0f}KB)")
+    if not raw:
         print("과거 예보를 하나도 받지 못했습니다.", file=sys.stderr)
         return 1
+    reach = {m: {r: {lead: rolling_reach(series) for lead, series in leads.items()} for r, leads in data.items()} for m, data in raw.items()}
     out.append("")
-    got_extra = [m for m in extra if m in reach]
-    sets = {"지금 쓰는 모델": base}
-    for m in got_extra:
-        sets[f"지금 + {m}"] = base + [m]
-    if len(got_extra) > 1:
-        sets["지금 + 받은 모델 전부"] = base + got_extra
+    have_base = [m for m in base if m in reach]
+    others = [m for m in reach if m not in base]
+    sets: dict[str, list[str]] = {}
+    if have_base:
+        sets["지금 쓰는 모델"] = have_base
+    for m in others:
+        sets[f"지금 + {m}" if have_base else m] = have_base + [m]
+    if len(others) > 1:
+        sets["지금 + 더한 모델 전부" if have_base else "더한 모델 전부"] = have_base + others
     study(regions, times, reach, truth, events, sets, out)
     text = "\n".join(out)
     print(text)
