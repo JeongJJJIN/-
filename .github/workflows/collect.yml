@@ -38,7 +38,11 @@ jobs:
     outputs:
       ran: ${{ steps.due.outputs.run }}
     steps:
+      # 이 실행을 일으킨 시점의 커밋이 아니라 지금의 최신 커밋을 받는다: 앞의 실행이 끝나기를 기다리는 동안 그 실행이 이력을
+      # 커밋하므로, 옛 커밋에서 시작하면 이력 파일이 서로 달라져 push 가 충돌한다(2026-11-13 에 실제로 실패함).
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
 
       - name: 지금 돌릴 때인지 확인 (예약 실행일 때만 — 직접 실행·코드 변경은 늘 돈다)
         id: due
