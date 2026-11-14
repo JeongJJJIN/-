@@ -6,7 +6,8 @@
     "models: 비교할 예측 자료. source 가 open_meteo 인 항목의 id 는 Open-Meteo 의 models 파라미터 값 그대로입니다 (https://open-meteo.com/en/docs).",
     "  ※ Open-Meteo 의 KMA 모델(kma_seamless 등)은 2026-03-31 부로 갱신이 중단되어 넣지 않았습니다. 한반도를 5km 로 덮는 JMA MSM 을 대신 사용합니다.",
     "scoring: 가능성(%) 계산식(teukbo/scoring.py 의 compute_probability)의 가중치. 세 가중치의 합은 1.",
-    "grades: 가능성(%)이 caution_min 이상이면 '주의', high_min 이상이면 '높음'."
+    "grades: 가능성(%)이 caution_min 이상이면 '주의', high_min 이상이면 '높음'.",
+    "stale_after_hours: 계산이 이보다 오래되면 화면에 '자료가 N시간 전 것입니다' 경고를 띄운다. 계산 주기(3시간)에 여유 1시간 — 한 회차가 통째로 빠지면 알린다."
   ],
   "horizon_hours": 48,
   "fetch": {
@@ -118,5 +119,5 @@
       {"min": 9000, "max": 9999, "name": "SRT"}
     ]
   },
-  "stale_after_hours": 7
+  "stale_after_hours": 4
 }

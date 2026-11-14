@@ -195,28 +195,37 @@
   }
 
   /** 시간별 예보(모델별) → 날씨 요약. 값은 모델들의 중간값이고, 비·눈은 몇 개 모델이 예상하는지도 센다.
-   *  rain_3h 는 '그 시각까지 3시간 동안 내린 양'이라, 3시간 간격으로 집으면 겹치지 않는 시간대별 강수량이 된다. */
+   *  rain_3h 는 '그 시각까지 3시간 동안 내린 양'이라, 3시간 간격으로 집으면 겹치지 않는 시간대별 강수량이 된다.
+   *  '지금'은 계산한 시각이 아니라 보는 시각이다: 계산이 몇 시간 전 것이어도 이미 지나간 시간대는 빼고 남은 예보만 요약한다
+   *  (지나간 '19시부터 비'를 그대로 보여 주지 않으려고). 예보 기간이 모두 지났으면 아무것도 싣지 않는다. */
   function weatherOf(doc) {
     const times = doc.times, series = doc.series || {}, n = times.length;
-    const models = (key) => Object.values(series[key] || {}).filter((row) => Array.isArray(row) && row.some((v) => v != null));
+    const ahead = (Date.now() - new Date(times[0]).getTime()) / 3600000;  // 자료의 첫 시각에서 지금까지 흐른 시간
+    const at = Math.max(0, Math.min(n - 1, Math.round(ahead)));  // 지금에 가장 가까운 시각
+    const from = Math.max(1, at);  // 요약에 넣는 첫 시각
+    const out = { blocks: [], rain: null, snow: null, tempMin: null, tempMax: null, wind: null, gust: null, now: null, until: times[n - 1] };
+    if (ahead >= n - 1) return out;
+    const models = (key) => Object.values(series[key] || {}).filter((row) => Array.isArray(row) && row.some((v, i) => i >= from && v != null));
     const mid = (key) => { const rows = models(key); return rows.length ? times.map((_, i) => median(rows.map((row) => row[i]))) : null; };
-    const peak = (row, sign) => { let best = null; (row || []).forEach((v, i) => { if (i > 0 && v != null && (best == null || sign * v > sign * row[best])) best = i; }); return best == null ? null : { v: row[best], t: times[best] }; };
-    const out = { blocks: [], rain: null, snow: null, tempMin: null, tempMax: null, wind: null, gust: null, now: null };
+    const peak = (row, sign) => { let best = null; (row || []).forEach((v, i) => { if (i >= from && v != null && (best == null || sign * v > sign * row[best])) best = i; }); return best == null ? null : { v: row[best], t: times[best] }; };
 
     const rainRows = models("i:rain_3h");
     if (rainRows.length) {
-      for (let i = 3; i < n; i += 3) out.blocks.push({ from: times[i - 3], to: times[i], mm: median(rainRows.map((row) => row[i])), temp: null });
-      const totals = rainRows.map((row) => { let sum = 0; for (let i = 3; i < n; i += 3) sum += row[i] || 0; return sum; });
-      const wet = rainRows.map((row, k) => (totals[k] >= RAIN_MODEL_MM ? row.findIndex((v, i) => i > 0 && v != null && v >= RAIN_START_MM) : -1)).filter((i) => i > 0).sort((a, b) => a - b);
-      out.rain = { models: rainRows.length, wet: wet.length, start: wet.length ? times[wet[Math.floor((wet.length - 1) / 2)]] : null, min: Math.min(...totals), max: Math.max(...totals) };
+      const ends = [];  // 아직 끝나지 않은 3시간대의 끝 시각(번호)
+      for (let i = 3; i < n; i += 3) if (i > ahead) ends.push(i);
+      for (const i of ends) out.blocks.push({ at: i - 3, from: times[i - 3], to: times[i], mm: median(rainRows.map((row) => row[i])), temp: null });
+      const totals = rainRows.map((row) => ends.reduce((sum, i) => sum + (row[i] || 0), 0));
+      const wet = rainRows.map((row, k) => (totals[k] >= RAIN_MODEL_MM ? row.findIndex((v, i) => i >= from && v != null && v >= RAIN_START_MM) : -1)).filter((i) => i > 0).sort((x, y) => x - y);
+      const start = wet.length ? wet[Math.floor((wet.length - 1) / 2)] : null;
+      // ongoing: 지금에 가장 가까운 시각의 3시간 강수량이 이미 비로 잡혀 있다 = 비가 오고 있거나 막 지나간 시간대
+      out.rain = { models: rainRows.length, wet: wet.length, start: start == null ? null : times[start], ongoing: start != null && start <= at, min: Math.min(...totals), max: Math.max(...totals) };
     }
-    const snowRows = models("i:snow_24h"), snowMax = snowRows.map((row) => Math.max(0, ...row.slice(1).filter((v) => v != null)));
+    const snowRows = models("i:snow_24h"), snowMax = snowRows.map((row) => Math.max(0, ...row.filter((v, i) => i >= from && v != null)));
     if (snowRows.length) out.snow = { models: snowRows.length, wet: snowMax.filter((v) => v >= SNOW_MIN_CM).length, max: Math.max(0, ...snowMax) };
     const temp = mid("v:temp"), wind = mid("i:wind"), gust = mid("i:gust");
     out.tempMin = peak(temp, -1); out.tempMax = peak(temp, 1); out.wind = peak(wind, 1); out.gust = peak(gust, 1);
     if (temp) {
-      out.blocks.forEach((b, k) => { b.temp = temp[k * 3]; });  // 그 시간대가 시작할 때의 기온
-      const at = Math.max(0, Math.min(n - 1, Math.round((Date.now() - new Date(times[0]).getTime()) / 3600000)));  // 지금에 가장 가까운 시각
+      out.blocks.forEach((blk) => { blk.temp = temp[blk.at]; });  // 그 시간대가 시작할 때의 기온
       if (temp[at] != null) out.now = { v: temp[at], t: times[at] };
     }
     return out;
@@ -224,9 +233,14 @@
 
   const mm = (v) => (v < 1 ? (v < 0.05 ? "0" : v.toFixed(1)) : String(Math.round(v)));
 
-  const rainText = (r, withAmount) => {
-    const amount = !withAmount || r.max < 0.5 ? "" : ` · ${state.latest.horizon_hours}시간 ${mm(r.min) === mm(r.max) ? `${mm(r.max)}mm` : `${mm(r.min)}~${mm(r.max)}mm`}`;
-    return !r.wet ? "비 소식 없음" : r.wet * 2 >= r.models ? `${whenText(r.start)} 무렵부터 비${amount}` : `비가 올 수도 있음${amount}`;
+  /** 비 한 줄. detail: 날씨 칸('비' 이름표 옆)에 쓰는 꼴 — 예보가 끝나는 시각까지의 양을 덧붙인다. */
+  const rainText = (w, detail) => {
+    const r = w.rain;
+    const amount = !detail || r.max < 0.5 ? "" : ` · ${whenText(w.until)}까지 ${mm(r.min) === mm(r.max) ? `${mm(r.max)}mm` : `${mm(r.min)}~${mm(r.max)}mm`}`;
+    if (!r.wet) return "비 소식 없음";
+    if (r.wet * 2 < r.models) return `비가 올 수도 있음${amount}`;
+    if (r.ongoing) return `${detail ? "지금 오는 시간대" : "지금 비 예보"}${amount}`;
+    return `${whenText(r.start)} 무렵부터${detail ? "" : " 비"}${amount}`;
   };
   /** 가능성 아래에 적는 날씨 한 줄: '지금 14° · 최고 17° / 최저 13° · 오늘 17시 무렵부터 비' */
   function nowLine(region) {
@@ -237,7 +251,7 @@
     if (w.tempMin && w.tempMax) parts.push(`최고 ${Math.round(w.tempMax.v)}° / 최저 ${Math.round(w.tempMin.v)}°`);
     if (!parts.length && !w.rain) return null;
     return h("div", { class: "nowline" }, parts.length ? h("p", { text: parts.join(" · ") }) : null,
-      w.rain ? h("p", { class: "rainline" }, w.rain.wet ? dropIcon(3) : null, rainText(w.rain, false)) : null);
+      w.rain ? h("p", { class: "rainline" }, w.rain.wet ? dropIcon(3) : null, rainText(w, false)) : null);
   }
 
   const dropIcon = (level) => s("svg", { class: `wx-icon rain l${level}`, viewBox: "0 0 24 24", "aria-hidden": "true" }, s("path", { d: "M12 3.2c3.2 4.3 5.3 7.2 5.3 10.2a5.3 5.3 0 0 1-10.6 0c0-3 2.1-5.900 5.3-10.2Z" }));
@@ -273,10 +287,11 @@
   function renderWeather(region) {
     const doc = detailOf(region);
     if (!doc) return null;
-    const box = h("section", { class: "glass weather", "aria-label": "날씨" }, h("p", { class: "glass-title" }, "날씨", h("small", null, ` 앞으로 ${state.latest.horizon_hours}시간 · 예보들의 중간값`)));
-    if (doc === "loading") return put(box, h("p", { class: "basis", text: "불러오는 중…" }));
+    const box = h("section", { class: "glass weather", "aria-label": "날씨" });
+    if (doc === "loading") return put(box, h("p", { class: "glass-title" }, "날씨"), h("p", { class: "basis", text: "불러오는 중…" }));
     const w = weatherOf(doc), lines = [];
-    if (w.rain) lines.push(h("li", null, h("span", { class: "name", text: "비" }), h("b", { text: rainText(w.rain, true).replace(/ 비( ·|$)/, "$1") }), w.rain.wet ? h("small", null, `예보 ${w.rain.models}개 중 ${w.rain.wet}개가 비 예상`) : null));
+    box.append(h("p", { class: "glass-title" }, "날씨", h("small", null, ` 지금부터 ${whenText(w.until)}까지 · 예보들의 중간값`)));
+    if (w.rain) lines.push(h("li", null, h("span", { class: "name", text: "비" }), h("b", { text: rainText(w, true) }), w.rain.wet ? h("small", null, `예보 ${w.rain.models}개 중 ${w.rain.wet}개가 비 예상`) : null));
     if (w.snow && w.snow.wet) lines.push(h("li", null, h("span", { class: "name", text: "눈" }), h("b", { text: `최대 ${mm(w.snow.max)}cm` }), h("small", null, `예보 ${w.snow.models}개 중 ${w.snow.wet}개가 눈 예상(24시간 신적설)`)));
     if (w.tempMin && w.tempMax) lines.push(h("li", null, h("span", { class: "name", text: "기온" }), h("b", { text: `${Math.round(w.tempMin.v)}~${Math.round(w.tempMax.v)}℃` }), h("small", null, `최저 ${whenText(w.tempMin.t)} · 최고 ${whenText(w.tempMax.t)}`)));
     if (w.wind) lines.push(h("li", null, h("span", { class: "name", text: "바람" }), h("b", { text: `최대 ${Math.round(w.wind.v)}m/s` }), h("small", null, `${whenText(w.wind.t)}${w.gust ? ` · 순간 ${Math.round(w.gust.v)}m/s` : ""}`)));
